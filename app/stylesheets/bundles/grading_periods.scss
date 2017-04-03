@@ -1,0 +1,53 @@
+@import "base/environment";
+
+#grading-periods-tab {
+  #disable-feature-message {
+    float: right;
+  }
+  #admin-periods-message {
+    float: left;
+  }
+}
+#grading_periods {
+  margin-bottom: 0;
+
+  .grading-period:nth-child(n+2) {
+    border-top: none;
+  }
+
+  .icon-delete-grading-period::before {
+    padding: 9px 0px;
+    cursor: pointer;
+    height: 20px;
+    @include fontSize(20px);
+  }
+  .icon-delete-grading-period {
+    width: 20px;
+  }
+
+  label {
+    font-weight: bold;
+  }
+}
+
+.grading-period {
+  display: flex;
+}
+
+.GradingPeriod__Details {
+  flex: 1 1;
+}
+
+.GradingPeriod__Detail {
+  width: 100%;
+
+  &.ic-Input.hasDatepicker {
+    display: inline-block;
+    width: calc(100% - 46px);
+  }
+}
+
+.GradingPeriod__Actions {
+  flex: 0 0;
+  margin-right: 12px;
+}

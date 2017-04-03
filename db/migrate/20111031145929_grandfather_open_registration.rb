@@ -1,4 +1,6 @@
-class GrandfatherOpenRegistration < ActiveRecord::Migration
+class GrandfatherOpenRegistration < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     Account.root_accounts.find_each do |account|
       # Grandfather all old accounts to open_registration

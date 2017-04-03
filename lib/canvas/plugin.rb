@@ -24,7 +24,7 @@ module Canvas
 
   class Plugin
     @registered_plugins = {}
-    
+
     attr_accessor :meta, :settings
     attr_reader :id, :tag
 
@@ -44,23 +44,41 @@ module Canvas
               :base=>nil
       }.with_indifferent_access
     end
-    
-    def default_settings
-      @meta[:settings]
+
+
+    # custom serialization, since the meta can containt procs
+    def _dump(depth)
+      self.id.to_s
     end
-    
+
+    def self._load(str)
+      find(str)
+    end
+
+    def encode_with(coder)
+      coder['id'] = self.id.to_s
+    end
+
+    Psych.add_domain_type("ruby/object", "Canvas::Plugin") do |_type, val|
+      Canvas::Plugin.find(val.id)
+    end
+
+    def default_settings
+      settings = @meta[:settings]
+      settings = settings.call if settings.respond_to?(:call)
+      settings
+    end
+
     def saved_settings
       PluginSetting.settings_for_plugin(self.id, self)
     end
-    
+
     def settings
-      # TODO: once we have distributed memcache we can
-      # cache this properly across all web servers
       saved_settings
     end
 
     def enabled?
-      ps = PluginSetting.find_by_name(self.id.to_s)
+      ps = PluginSetting.cached_plugin_setting(self.id)
       return false unless ps
       ps.valid_settings? && ps.enabled?
     end
@@ -81,35 +99,29 @@ module Canvas
       t_if_proc(settings[name])
     end
 
-    if RUBY_VERSION > "1.9."
     def t_if_proc(attribute)
       attribute.is_a?(Proc) ? instance_exec(&attribute) : attribute
-    end
-    else
-    def t_if_proc(attribute)
-      attribute.is_a?(Proc) ? instance_eval(&attribute) : attribute
-    end
     end
 
     def validator
       @meta[:validator]
     end
-    
+
     def version
       @meta[:version]
     end
-    
+
     def settings_partial
       @meta[:settings_partial]
     end
-    
+
     def has_settings_partial?
       !meta[:settings_partial].blank?
     end
 
     # base class/module for this plugin
     def base
-      @meta[:base]
+      @meta[:base].is_a?(Symbol) ? @meta[:base].to_s.constantize : @meta[:base]
     end
 
     # arbitrary meta key/value pairs (these aren't configurable settings)
@@ -131,20 +143,20 @@ module Canvas
     # add any errors that it would like.
     def validate_settings(plugin_setting, settings)
       if validator
-        validator_module = Canvas::Plugins::Validators.const_defined?(validator) && Canvas::Plugins::Validators.const_get(validator)
-        if validator_module && validator_module.respond_to?(:validate)
-          res = validator_module.validate(settings, plugin_setting)
-          if res.is_a?(Hash)
-            plugin_setting.settings = (self.default_settings || {}).with_indifferent_access.merge(res || {})
-          else
-            false
-          end
+        begin
+          validator_module = Canvas::Plugins::Validators.const_get(validator)
+        rescue NameError
+          plugin_setting.errors.add(:base, "provided validator #{validator} failed to load")
+          return false
+        end
+        res = validator_module.validate(settings, plugin_setting)
+        if res.is_a?(Hash)
+          plugin_setting.settings = (plugin_setting.settings || self.default_settings || {}).with_indifferent_access.merge(res || {})
         else
-          plugin_setting.errors.add_to_base("provided validator #{validator} failed to load")
           false
         end
       else
-        plugin_setting.settings = (self.default_settings || {}).with_indifferent_access.merge(settings || {})
+        plugin_setting.settings = (plugin_setting.settings || self.default_settings || {}).with_indifferent_access.merge(settings || {})
       end
     end
 
@@ -154,13 +166,13 @@ module Canvas
       p.meta.merge! meta
       @registered_plugins[p.id] = p
     end
-    
+
     def self.all
-      @registered_plugins.values.sort{|p,p2| p.name <=> p2.name}
+      @registered_plugins.values.sort_by(&:name)
     end
 
     def self.all_for_tag(tag)
-      @registered_plugins.values.select{|p|p.tag == tag.to_s}.sort{|p,p2| p.name <=> p2.name}
+      @registered_plugins.values.select{|p|p.tag == tag.to_s}.sort_by(&:name)
     end
 
     def self.find(id)
@@ -174,14 +186,14 @@ module Canvas
 
     def self.value_to_boolean(value)
       if value.is_a?(String) || value.is_a?(Symbol)
-        return true if ["yes", "true", "on"].include?(value.to_s.downcase)
-        return false if ["no", "false", "off"].include?(value.to_s.downcase)
+        return true if ["yes", "y", "true", "t", "on", "1"].include?(value.to_s.downcase)
+        return false if ["no", "n", "false", "f", "off", "0"].include?(value.to_s.downcase)
       end
       return value if [true, false].include?(value)
       return value.to_i != 0
     end
   end
-  
+
   module Plugins
     module Validators
     end

@@ -1,4 +1,6 @@
-class RemoveSectionAndHiddenTabsFromCourses < ActiveRecord::Migration
+class RemoveSectionAndHiddenTabsFromCourses < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     remove_column :courses, :section
     remove_column :courses, :hidden_tabs

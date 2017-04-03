@@ -26,12 +26,14 @@ module CC::Importer::Canvas
       doc.css('module').each do |r_node|
         mod = {}
         mod[:migration_id] = r_node['identifier']
+        mod[:workflow_state] = get_node_val(r_node, 'workflow_state')
         mod[:title] = get_node_val(r_node, 'title')
         mod[:position] = get_int_val(r_node, 'position')
         mod[:start_at] = get_time_val(r_node, 'start_at')
         mod[:end_at] = get_time_val(r_node, 'end_at')
         mod[:unlock_at] = get_time_val(r_node, 'unlock_at')
         mod[:require_sequential_progress] = get_bool_val(r_node, 'require_sequential_progress')
+        mod[:requirement_count] = get_int_val(r_node, 'requirement_count')
 
         mod[:items] = []
         r_node.css('item').each do |item_node|
@@ -42,8 +44,10 @@ module CC::Importer::Canvas
           item[:url] = get_node_val(item_node, 'url')
           item[:title] = get_node_val(item_node, 'title')
           item[:new_tab] = get_bool_val(item_node, 'new_tab')
+          item[:workflow_state] = get_node_val(item_node, 'workflow_state')
           item[:linked_resource_type] = get_node_val(item_node, 'content_type')
           item[:linked_resource_id] = get_node_val(item_node, 'identifierref')
+          item[:linked_resource_global_id] = get_node_val(item_node, 'global_identifierref')
 
           mod[:items] << item
         end
@@ -54,7 +58,6 @@ module CC::Importer::Canvas
           cr[:type] = cr_node['type']
           cr[:item_migration_id] = get_node_val(cr_node, 'identifierref')
           cr[:min_score] = get_float_val(cr_node, 'min_score')
-          cr[:max_score] = get_float_val(cr_node, 'max_score')
 
           mod[:completion_requirements] << cr
         end

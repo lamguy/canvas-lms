@@ -1,4 +1,4 @@
-class DropPsqlJobsPopFn < ActiveRecord::Migration
+class DropPsqlJobsPopFn < ActiveRecord::Migration[4.2]
   tag :predeploy
 
   def self.connection
@@ -7,7 +7,7 @@ class DropPsqlJobsPopFn < ActiveRecord::Migration
 
   def self.up
     if connection.adapter_name == 'PostgreSQL'
-      connection.execute("DROP FUNCTION IF EXISTS pop_from_delayed_jobs(varchar, varchar, integer, integer, timestamp without time zone)")
+      connection.execute("DROP FUNCTION IF EXISTS #{connection.quote_table_name('pop_from_delayed_jobs')}(varchar, varchar, integer, integer, timestamp without time zone)")
     end
   end
 

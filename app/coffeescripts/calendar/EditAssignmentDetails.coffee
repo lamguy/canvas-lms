@@ -1,34 +1,44 @@
 define [
+  'i18n!calendar'
   'jquery'
+  'timezone'
+  'compiled/util/fcUtil'
+  'compiled/util/natcompare'
   'compiled/calendar/commonEventFactory'
   'jst/calendar/editAssignment'
-  'jst/calendar/genericSelect'
+  'jst/calendar/editAssignmentOverride'
+  'jst/calendar/genericSelectOptions'
+  'jsx/shared/helpers/datePickerFormat'
   'jquery.instructure_date_and_time'
   'jquery.instructure_forms'
   'jquery.instructure_misc_helpers'
-], ($, commonEventFactory, editAssignmentTemplate, genericSelectTemplate) ->
+  'compiled/calendar/fcMomentHandlebarsHelpers'
+], (I18n, $, tz, fcUtil, natcompare, commonEventFactory, editAssignmentTemplate, editAssignmentOverrideTemplate, genericSelectOptionsTemplate, datePickerFormat) ->
 
   class EditAssignmentDetails
     constructor: (selector, @event, @contextChangeCB, @closeCB) ->
       @currentContextInfo = null
-      @form = $(editAssignmentTemplate({
+      tpl = if @event.override then editAssignmentOverrideTemplate else editAssignmentTemplate
+      @$form = $(tpl({
         title: @event.title
         contexts: @event.possibleContexts()
+        date: @event.startDate()
+        datePickerFormat: if @event.allDay then 'medium_with_weekday' else 'full_with_weekday'
       }))
-      $(selector).append @form
+      $(selector).append @$form
 
       @setupTimeAndDatePickers()
 
-      @form.submit @formSubmit
-      @form.find(".more_options_link").click @moreOptionsClick
-      @form.find("select.context_id").change @contextChange
-      @form.find("select.context_id").triggerHandler('change', false)
+      @$form.submit @formSubmit
+      @$form.find(".more_options_link").click @moreOptionsClick
+      @$form.find("select.context_id").change @contextChange
+      @$form.find("select.context_id").triggerHandler('change', false)
 
       # Hide the context selector completely if this is an existing event, since it can't be changed.
       if !@event.isNewEvent()
-        @form.find(".context_select").hide()
-        @form.attr('method', 'PUT')
-        @form.attr('action', $.replaceTags(@event.contextInfo.assignment_url, 'id', @event.object.id))
+        @$form.find(".context_select").hide()
+        @$form.attr('method', 'PUT')
+        @$form.attr('action', $.replaceTags(@event.contextInfo.assignment_url, 'id', @event.object.id))
 
     contextInfoForCode: (code) ->
       for context in @event.possibleContexts()
@@ -37,24 +47,26 @@ define [
       return null
 
     activate: () =>
-      @form.find("select.context_id").change()
+      @$form.find("select.context_id").change()
       if @event.assignment?.assignment_group_id
-        @form.find(".assignment_group_select .assignment_group").val(@event.assignment.assignment_group_id)
+        @$form.find(".assignment_group_select .assignment_group").val(@event.assignment.assignment_group_id)
 
     moreOptionsClick: (jsEvent) =>
       jsEvent.preventDefault()
       pieces = $(jsEvent.target).attr('href').split("#")
-      data = @form.getFormData( object_name: 'assignment' )
+      data = @$form.getFormData( object_name: 'assignment' )
       params = {}
       if data.title then params['title'] = data.title
-      if data.due_at then params['due_at'] = data.due_at
+      if data.due_at and @$form.find(".datetime_field").data('unfudged-date')
+          params['due_at'] = @$form.find(".datetime_field").data('unfudged-date').toISOString()
+
       if data.assignment_group_id then params['assignment_group_id'] = data.assignment_group_id
       params['return_to'] = window.location.href
       pieces[0] += "?" + $.param(params)
       window.location.href = pieces.join("#")
 
     setContext: (newContext) =>
-      @form.find("select.context_id").val(newContext).triggerHandler('change', false)
+      @$form.find("select.context_id").val(newContext).triggerHandler('change', false)
 
     contextChange: (jsEvent, propagate) =>
       return if @ignoreContextChange
@@ -68,56 +80,55 @@ define [
         @contextChangeCB(context)
 
       # TODO: support adding a new assignment group from this select box
-      assignmentGroupsSelectInfo =
-        cssClass: 'assignment_group'
-        name: 'assignment[assignment_group_id]'
-        collection: @currentContextInfo.assignment_groups
-      @form.find(".assignment_group_select").html(genericSelectTemplate(assignmentGroupsSelectInfo))
+      assignmentGroupsSelectOptionsInfo =
+        collection: @currentContextInfo.assignment_groups.sort(natcompare.byKey('name'))
+      @$form.find(".assignment_group").html(genericSelectOptionsTemplate(assignmentGroupsSelectOptionsInfo))
 
       # Update the edit and more options links with the new context
-      @form.attr('action', @currentContextInfo.create_assignment_url)
+      @$form.attr('action', @currentContextInfo.create_assignment_url)
       moreOptionsUrl = if @event.assignment
                            "#{@event.assignment.html_url}/edit"
                          else
                            @currentContextInfo.new_assignment_url
-      @form.find(".more_options_link").attr('href', moreOptionsUrl)
+      @$form.find(".more_options_link").attr('href', moreOptionsUrl)
 
     setupTimeAndDatePickers: () =>
-      @form.find(".datetime_field").datetime_field()
+      $field = @$form.find(".datetime_field")
+      $field.datetime_field({ datepicker: { dateFormat: datePickerFormat(if @event.allDay then I18n.t('#date.formats.medium_with_weekday') else I18n.t('#date.formats.full_with_weekday')) } })
 
-      startDate = @event.startDate()
-      endDate = @event.endDate()
+    formSubmit: (e) =>
+      e.preventDefault()
+      form = @$form.getFormData()
+      if form['assignment[due_at]']? then @submitAssignment(form) else @submitOverride(form)
 
-      if @event.allDay
-        @form.find(".datetime_field").val(startDate.toString('MMM d, yyyy')).change()
-      else if startDate
-        @form.find(".datetime_field").val(startDate.toString('MMM d, yyyy h:mmtt')).change()
+    submitAssignment: (form) ->
+      $due_at = @$form.find("#assignment_due_at")
 
-    formSubmit: (jsEvent) =>
-      jsEvent.preventDefault()
-
-      dueAtString = @form.getFormData()['assignment[due_at]']
-      if dueAtString == ''
-        dueAt = null
-      else
-        dueAt = @form.find("#assignment_due_at").data('date')
       params = {
-        'assignment[name]': @form.find("#assignment_title").val()
-        'assignment[due_at]': if dueAt then $.dateToISO8601UTC($.unfudgeDateForProfileTimezone(dueAt)) else ''
-        'assignment[assignment_group_id]': @form.find(".assignment_group").val()
+        'assignment[name]': @$form.find("#assignment_title").val()
+        'assignment[published]': @$form.find("#assignment_published").val() if @$form.find("#assignment_published").is(':checked')
+        'assignment[due_at]': $due_at.data('iso8601')
+        'assignment[assignment_group_id]': @$form.find(".assignment_group").val()
       }
 
       if @event.isNewEvent()
         objectData =
           assignment:
             title: params['assignment[name]']
-            due_at: if dueAt then $.dateToISO8601UTC(dueAt) else null
-            context_code: @form.find(".context_id").val()
+            due_at: params['assignment[due_at]']
+            context_code: @$form.find(".context_id").val()
         newEvent = commonEventFactory(objectData, @event.possibleContexts())
         newEvent.save(params)
       else
         @event.title = params['assignment[name]']
-        @event.start = dueAt
+        @event.start = $due_at.data('date') # fudged
         @event.save(params)
 
+      @closeCB()
+
+    submitOverride: (form) ->
+      $due_at = @$form.find('#assignment_override_due_at')
+      params = 'assignment_override[due_at]': $due_at.data('iso8601')
+      @event.start = $due_at.data('date') # fudged
+      @event.save(params)
       @closeCB()

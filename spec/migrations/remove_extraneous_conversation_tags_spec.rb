@@ -24,9 +24,9 @@ describe 'DataFixup::RemoveExtraneousConversationTags' do
     @u1 = student_in_course(:active_all => true).user
     @u2 = student_in_course(:active_all => true, :course => @course).user
     @course1 = @course
-    @course2 = course(:active_all => true)
+    @course2 = course_factory(active_all: true)
     @course2.enroll_student(@u1).update_attribute(:workflow_state, 'active')
-    @conversation = Conversation.initiate([@u1.id, @u2.id], true)
+    @conversation = Conversation.initiate([@u1, @u2], true)
     @conversation.add_message(@u1, 'test', :tags => [@course1.asset_string])
     @message = @conversation.add_message(@u1, 'test')
     @cp1 = @u1.conversations.first
@@ -39,7 +39,7 @@ describe 'DataFixup::RemoveExtraneousConversationTags' do
       @conversation.update_attribute :tags, [@course1.asset_string, @course2.asset_string]
       @cp1.update_attribute :tags, [@course1.asset_string, @course2.asset_string]
       DataFixup::RemoveExtraneousConversationTags.run
-      @conversation.reload.tags.should eql [@course1.asset_string]
+      expect(@conversation.reload.tags).to eql [@course1.asset_string]
     end
   end
 
@@ -48,38 +48,38 @@ describe 'DataFixup::RemoveExtraneousConversationTags' do
       # fake up the bad data
       @conversation.update_attribute :tags, [@course1.asset_string, @course2.asset_string]
       @cp1.update_attribute :tags, [@course1.asset_string, @course2.asset_string]
-      cmp1 = @cp1.conversation_message_participants.find(:first, :conditions => ["conversation_message_id = ?", @message.id])
+      cmp1 = @cp1.conversation_message_participants.where(:conversation_message_id => @message).first
       cmp1.update_attribute :tags, [@course2.asset_string]
 
       DataFixup::RemoveExtraneousConversationTags.fix_private_conversation!(@conversation)
       
-      @conversation.reload.tags.should eql [@course1.asset_string]
-      @cp1.reload.tags.should eql [@course1.asset_string]
-      cmp1.reload.tags.should eql [@course1.asset_string]
+      expect(@conversation.reload.tags).to eql [@course1.asset_string]
+      expect(@cp1.reload.tags).to eql [@course1.asset_string]
+      expect(cmp1.reload.tags).to eql [@course1.asset_string]
     end
 
     it "should fix invalid participant tags even if the conversation's tags are correct" do
       # fake up the bad data
       @cp1.update_attribute :tags, [@course1.asset_string, @course2.asset_string]
-      cmp1 = @cp1.conversation_message_participants.find(:first, :conditions => ["conversation_message_id = ?", @message.id])
+      cmp1 = @cp1.conversation_message_participants.where(:conversation_message_id => @message).first
       cmp1.update_attribute :tags, [@course2.asset_string]
 
       DataFixup::RemoveExtraneousConversationTags.fix_private_conversation!(@conversation)
       
-      @conversation.reload.tags.should eql [@course1.asset_string]
-      @cp1.reload.tags.should eql [@course1.asset_string]
-      cmp1.reload.tags.should eql [@course1.asset_string]
+      expect(@conversation.reload.tags).to eql [@course1.asset_string]
+      expect(@cp1.reload.tags).to eql [@course1.asset_string]
+      expect(cmp1.reload.tags).to eql [@course1.asset_string]
     end
 
     it "should do nothing if the tags are already correct" do
       @cp2.remove_messages :all
-      @cp1.reload.tags.should eql [@course1.asset_string]
-      @cp2.reload.tags.should eql []
+      expect(@cp1.reload.tags).to eql [@course1.asset_string]
+      expect(@cp2.reload.tags).to eql []
 
       DataFixup::RemoveExtraneousConversationTags.fix_private_conversation!(@conversation)
 
-      @cp1.reload.tags.should eql [@course1.asset_string]
-      @cp2.reload.tags.should eql []
+      expect(@cp1.reload.tags).to eql [@course1.asset_string]
+      expect(@cp2.reload.tags).to eql []
     end
   end
 end

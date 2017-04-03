@@ -1,7 +1,11 @@
-class TurnitinFix < ActiveRecord::Migration
+class TurnitinFix < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     Assignment.record_timestamps = false
-    Assignment.find_each(:conditions => "turnitin_enabled AND EXISTS (SELECT 1 FROM submissions WHERE assignment_id = assignments.id AND turnitin_data IS NOT NULL)") do |assignment|
+    Assignment.where("turnitin_enabled AND EXISTS (?)",
+                     Submission.where("assignment_id = assignments.id AND turnitin_data IS NOT NULL")).
+        find_each do |assignment|
       assignment.turnitin_settings = assignment.turnitin_settings
       assignment.turnitin_settings[:created] = true
       assignment.save

@@ -1,8 +1,9 @@
 <% content_for :page_title do %><%= join_title @page.name, @category.name, @portfolio.name %><% end %>
 <%
   js_bundle :eportfolio
-  jammit_css :tinymce
+  css_bundle :tinymce
   @no_left_side_list_view = true
+  js_env({ SECTION_COUNT_IDX: @page.content_sections.count })
 %>
 
 <% content_for :auto_discovery do %>
@@ -16,7 +17,11 @@
 <% content_for :left_side do %>
   <div class="eportfolio-name">
     <h3><%= @portfolio.name %></h3>
-    <a href="<%= url_for(@portfolio.user) %>" id="section-tabs-header-subtitle" class="ellipsis"><%= @portfolio.user.name %></a>
+    <% if @owner_url %>
+      <a href="<%= @owner_url %>" id="section-tabs-header-subtitle" class="ellipsis"><%= @portfolio.user.name %></a>
+    <% else %>
+      <span id="section-tabs-header-subtitle" class="ellipsis"><%= @portfolio.user.name %></span>
+    <% end %>
   </div>
   <%= render :partial => "eportfolios/section_list" %>
 <% end %>
@@ -24,19 +29,19 @@
 <% content_for :right_side do %>
   <div id="page_sidebar">
     <% if can_do(@portfolio, @current_user, :manage) && !@owner_view %>
-      <div class="rs-margin-all">
+      <div class="rs-margin-bottom">
         <a href="#" class="wizard_popup_link"><%= help_link_text %></a>
       </div>
     <% end %>
     <%= render :partial => "eportfolios/page_list" %>
     <% if can_do(@portfolio, @current_user, :manage) && !@owner_view %>
-    <div class="rs-margin-lr edit_content_link_holder">
-      <a href="#" class="edit_content_link button button-sidebar-wide"><%= edit_link_text %></a>
-      <a href="<%= eportfolio_path(@portfolio.id) %>" class="back"><%= t('links.back', "Back to Portfolio Dashboard") %></a>
+    <div class="edit_content_link_holder">
+      <a href="#" class="edit_content_link btn button-sidebar-wide"><%= edit_link_text %></a>
+      <a href="<%= eportfolio_path(@portfolio.id) %>" class="icon-arrow-left"><%= t('links.back', "Back to Portfolio Dashboard") %></a>
     </div>
     <div id="edit_page_sidebar">
       <h2 class="header"><%= t('headers.add_content', "Add Content") %></h2>
-      <div class="rs-margin-lr">
+      <div>
         <ul>
           <li><a class="add_content_link add_rich_content_link" href="#"><%= t('links.rich_content', "Rich Text Content") %></a></li>
           <li><a class="add_content_link add_html_link" href="#"><%= t('links.html_content', "HTML/Embedded Content") %></a></li>
@@ -44,14 +49,14 @@
           <li><a class="add_content_link add_file_link" href="#"><%= t('links.file_uload', "Image/File Upload") %></a></li>
         </ul>
         <div class="form_content button-container">
-          <button type="button" class="submit_button button small-button button-default"><%= t('buttons.save_page', "Save Page") %></button>
-          <button type="button" class="preview_button button small-button"><%= t('buttons.preview', "Preview") %></button>
-          <button type="button" class="cancel_button button-secondary"><%= t('#buttons.cancel', "Cancel") %></button>
+          <button type="button" class="cancel_button btn button-secondary btn-small"><%= t('#buttons.cancel', "Cancel") %></button>
+          <button type="button" class="preview_button btn btn-small"><%= t('buttons.preview', "Preview") %></button>
+          <button type="button" class="submit_button btn btn-small btn-primary"><%= t('buttons.save_page', "Save Page") %></button>
         </div>
         <div class="preview_content button-container">
-          <button type="button" class="submit_button button small-button button-default"><%= t('buttons.save_page', "Save Page") %></button>
-          <button type="button" class="keep_editing_button button small-button"><%= t('buttons.keep_editing', "Keep Editing") %></button>
-          <button type="button" class="cancel_button button-secondary"><%= t('#buttons.cancel', "Cancel") %></button>
+          <button type="button" class="cancel_button btn button-secondary btn-small"><%= t('#buttons.cancel', "Cancel") %></button>
+          <button type="button" class="keep_editing_button btn btn-small"><%= t('buttons.keep_editing', "Keep Editing") %></button>
+          <button type="button" class="submit_button btn btn-small btn-primary"><%= t('buttons.save_page', "Save Page") %></button>
         </div>
       </div>
     </div>
@@ -71,10 +76,10 @@
     DETAILS
   %></p>
   <ul class="unstyled_list" style="padding-left: 20px; margin-bottom: 20px; line-height: 1.8em; font-size: 1.2em;">
-    <li><a href="#" class="wizard_popup_link help"><%= t('links.wizard', "Getting Started Wizard") %></a></li>
-    <li><a href="?view=preview" class="forward"><%= t('links.portfolio', "Go to the Actual ePortfolio") %></a></li>
+    <li><a href="#" class="wizard_popup_link icon-question"><%= t('links.wizard', "Getting Started Wizard") %></a></li>
+    <li><a href="?view=preview" class="icon-arrow-right"><%= t('links.portfolio', "Go to the Actual ePortfolio") %></a></li>
   </ul>
-  
+
   <% if @portfolio.public %>
     <h3><%= t('headers.public_eportfolio', "Your ePortfolio is Public") %></h3>
     <p><%= t(:public_eportfolio, <<-DETAILS,
@@ -93,12 +98,13 @@
       DETAILS
     %></p>
     <p>
-    <a href="<%= eportfolio_path(@portfolio.id, :verifier => @portfolio.uuid) %>"><b style="font-size: 1.2em;">
-      <%= t('links.share', "Copy and share this link to give others access to your private ePortfolio.") %>
-    </b></a>
+    <%= t('links.share', "Copy and share this link to give others access to your private ePortfolio:") %><br />
+    <a href="<%= eportfolio_path(@portfolio.id, :verifier => @portfolio.uuid) %>" id="eportfolio_share_link">
+      <%= eportfolio_url(@portfolio.id, :verifier => @portfolio.uuid) %>
+    </a>
     </p>
   <% end %>
-  
+
   <h3><%= t('headers.recent_submissions', "Recent Submissions") %></h3>
   <p><%= t(:recent_submissions, "Click any submission to add it to a new page in your ePortfolio.") %></p>
   <% if @portfolio.user.submissions.empty? %>
@@ -107,11 +113,15 @@
   <ul class="submission_list" id="recent_submissions" style="max-height: 200px; overflow: auto;">
     <% @portfolio.user.submissions.each do |submission| %>
       <% already_used = (@used_submission_ids.include?(submission.id) rescue false) %>
-      <li class="submission <%= 'already_used' if already_used %>" title="<%= t('titles.already_used', "This submission is already included in your portfolio") if already_used %>" id="recent_submission_<%= submission.id %>">
-        <a href="<%= eportfolio_entry_preview_submission_path(@portfolio, @page, submission.id) %>" style="display: none;" class="submission_preview_url"></a>
+      <li class="clearfix submission <%= 'already_used' if already_used %>" title="<%= t('titles.already_used', "This submission is already included in your portfolio") if already_used %>" id="recent_submission_<%= submission.id %>" tabindex="0">
+        <a href="<%= eportfolio_entry_preview_submission_path(@portfolio, @page, submission.id) %>"
+          style="display: none;"
+          class="submission_info">
+          <%= submission.assignment.title %>, <%= submission.assignment.context.name %>
+        </a>
         <div style="float: right; font-size: 0.8em; color: #aaa; margin-right: 20px; margin-top: 0.5em;">
           <%= datetime_string(submission.submitted_at || submission.updated_at) %>
-          &nbsp;<a href="<%= context_url(submission.assignment.context, :context_assignment_submission_url, submission.assignment_id, submission.id) %>" target="_blank" class="no-hover"><%= image_tag "popout.png", :title => t('titles.view_submission', "View the Submission") %></a>
+          &nbsp;<a href="<%= context_url(submission.assignment.context, :context_assignment_submission_url, submission.assignment_id, @portfolio.user.id) %>" target="_blank" class="no-hover view_submission_url"><%= image_tag "popout.png", :alt => t('titles.view_submission', "View the Submission") %></a>
         </div>
         <span class="text" style="font-size: 1.2em;">
           <span class="text assignment_title"><%= submission.assignment.title %></span>
@@ -187,8 +197,8 @@
       </tr>
     </table>
     <div class="button-container">
-      <button type="submit" class="button"><%= t('buttons.add_page', "Add Page") %></button>
-      <button type="button" class="cancel_button button-secondary"><%= t('#buttons.cancel', "Cancel") %></button>
+      <button type="button" class="btn cancel_button"><%= t('#buttons.cancel', "Cancel") %></button>
+      <button type="submit" class="btn btn-primary"><%= t('buttons.add_page', "Add Page") %></button>
     </div>
     <div style="display: none;">
       <a class="add_eportfolio_entry_url" href="<%= eportfolio_entries_path(@portfolio.id) %>">&nbsp;</a>
@@ -197,19 +207,17 @@
   </form>
 <% else %>
   <% if can_do(@portfolio, @current_user, :manage) %>
-  <div style="float: right; display: none;"><a href="#" class="edit_content_link edit"><%= edit_link_text %></a></div>
+  <div style="float: right; display: none;"><a href="#" class="edit_content_link icon-edit"><%= edit_link_text %></a></div>
   <% end %>
-  <h2><%= @page.name %></h2>
-  <% idx = 1 %>
-  <% form_for @page, :url => eportfolio_entry_url(@portfolio, @page), :html => {:id => "edit_page_form" } do |f| %>
+  <h2 id="eportfolio_entry_<%= @page.id %>"><span class="name"><%= @page.name %></span></h2>
+  <%= form_for @page, :url => eportfolio_entry_url(@portfolio, @page), :html => {:id => "edit_page_form" } do |f| %>
   <div class="form_content">
     <%= f.label :name, before_label(:page_name, "Page Name") %>
     <%= f.text_field :name %>
   </div>
   <div id="page_content">
-    <% @page.content_sections.each do |c| %>
+    <% @page.content_sections.each_with_index do |c, idx| %>
       <%= render :partial => "eportfolios/page_section", :object => c, :locals => {:idx => idx} %>
-      <% idx = idx + 1 %>
     <% end %>
   </div>
   <div class="form_content">
@@ -221,20 +229,21 @@
     </div>
   </div>
   <div class="form_content button-container">
-    <button type="submit" class="button button-default"><%= t('buttons.save_page', "Save Page") %></button>
-    <button type="button" class="preview_button button"><%= t('buttons.preview', "Preview") %></button>
-    <button type="button" class="cancel_button button-secondary"><%= t('#buttons.cancel', "Cancel") %></button>
+    <button type="button" class="cancel_button btn button-secondary"><%= t('#buttons.cancel', "Cancel") %></button>
+    <button type="button" class="preview_button btn"><%= t('buttons.preview', "Preview") %></button>
+    <button type="submit" class="btn btn-primary"><%= t('buttons.save_page', "Save Page") %></button>
   </div>
   <div class="preview_content button-container">
-    <button type="submit" class="button button-default"><%= t('buttons.save_page', "Save Page") %></button>
-    <button type="button" class="keep_editing_button button"><%= t('buttons.keep_editing', "Keep Editing") %></button>
-    <button type="button" class="cancel_button button-secondary"><%= t('#buttons.cancel', "Cancel") %></button>
+    <button type="button" class="cancel_button btn button-secondary"><%= t('#buttons.cancel', "Cancel") %></button>
+    <button type="button" class="keep_editing_button btn"><%= t('buttons.keep_editing', "Keep Editing") %></button>
+    <button type="submit" class="btn btn-primary"><%= t('buttons.save_page', "Save Page") %></button>
   </div>
   <table class="formtable" style="width: 100%; display: none;">
     <tr>
       <td colspan="2">
-        <div style="text-align: right; margin-right: 5%;">
-          <a href="#" class="switch_views_link" style="font-size: 0.8em;"><%= t('links.switch_views', "Switch Views") %></a>
+        <div style="text-align: right; margin-right: 5%; font-size: 0.8em;">
+          <a href="#" class="switch_views_link"><%= t '#editor.switch_editor_html', "HTML Editor" %></a>
+          <a href="#" class="switch_views_link" style="display:none;"><%= t '#editor.switch_editor_rich_text', "Rich Content Editor" %></a>
         </div>
         <%= f.text_area :content, :id => "edit_page_content", :style => "width: 98%; height: 300px;" %>
       </td>
@@ -243,11 +252,6 @@
   </table>
   <% end %>
   <%= render :partial => "eportfolios/page_section", :object => nil, :locals => {:idx => "blank"} %>
-  <% js_block do %>
-  <script>
-  var sectionCountIdx = <%= idx %>;
-  </script>
-  <% end %>
   <% if can_do(@portfolio, @current_user, :manage) %>
   <div id="edit_content_templates" style="display: none;">
     <div class="edit_rich_text_content form_content" style="display: none;">
@@ -265,9 +269,18 @@
       <ul class="submission_list">
         <% @portfolio.user.submissions.each do |submission| %>
           <li class="submission <%= 'already_used' if (@used_submission_ids.include?(submission.id) rescue false) %>" id="submission_<%= submission.id %>">
-            <a href="<%= eportfolio_entry_preview_submission_path(@portfolio, @page, submission.id) %>" style="display: none;" class="submission_preview_url"></a>
+            <a href="<%= eportfolio_entry_preview_submission_path(@portfolio, @page, submission.id) %>"
+              style="display: none;"
+              class="submission_info">
+              <%= submission.assignment.title %>, <%= submission.assignment.context.name %>
+            </a>
+            <span role="button" tabindex="0" class="text" style="font-size: 1.2em;">
+              <%= submission.assignment.title %>, <%= submission.assignment.context.name %>
+              <span class="screenreader-only">
+                <%=t "click to select" %>
+              </span>
+            </span>
             <div style="float: right; font-size: 0.8em; color: #aaa; margin-right: 20px; margin-top: 0.5em;"><%= datetime_string(submission.submitted_at || submission.updated_at) %></div>
-            <span class="text" style="font-size: 1.2em;"><%= submission.assignment.title %>, <%= submission.assignment.context.name %></span>
             <div style="font-size: 0.8em; color #aaa; margin-left: 20px;">
               <%= t(:attachment_count, { :one => "1 Attachment", :other => "%{count} Attachments" },
                     :count => submission.attachments.length) unless submission.attachments.empty? %></div>
@@ -275,9 +288,13 @@
           </li>
         <% end %>
       </ul>
-      <div class='button-container button-container-right-aligned'>
-        <button type="button" class="select_submission_button button small-button"><%= t('buttons.select_submission', "Select Submission") %></button>
-        <button type="button" class="cancel_content_button button-secondary"><%= t('#buttons.cancel', "Cancel") %></button>
+      <div class='button-container button-container-right-aligned clearfix'>
+        <button type="button" class="cancel_content_button btn button-secondary btn-small">
+          <%= t('#buttons.cancel', "Cancel") %>
+        </button>
+        <button type="button" class="select_submission_button btn btn-primary btn-small">
+          <%= t('buttons.select_submission', "Select Submission") %>
+        </button>
       </div>
     </div>
     <div class="edit_attachment_content form_content" style="display: none;">
@@ -291,24 +308,27 @@
         </div><br/>
         <%= before_label(:file_upload, "Or upload a new file") %><br/>
         <%= file_field :attachment, :uploaded_data, :class => "file_upload", :style => "padding-left: 50px;" %>
-        <div style="font-size: 0.8em; margin-left: 20px;"><%= t(:upload_limit, "limit 50MB per file") %></div>
+        <div style="font-size: 0.8em; margin-left: 20px;">
+          <%= t("%{file_size_limit} user file quota applies",
+                file_size_limit: number_to_human_size(@current_user.quota)) %>
+        </div>
       </div>
       <div class='button-container button-container-right-aligned'>
-        <button type="button" class="upload_file_button button small-button"><%= t('buttons.upload_file', "Select/Upload File") %></button>
-        <button type="button" class="cancel_content_button button-secondary"><%= t('#buttons.cancel', "Cancel") %></button>
+        <button type="button" class="upload_file_button btn btn-small"><%= t('buttons.upload_file', "Select/Upload File") %></button>
+        <button type="button" class="cancel_content_button btn btn-small"><%= t('#buttons.cancel', "Cancel") %></button>
       </div>
     </div>
     <div class="loading_submission" style="text-align: center;">
-      <%= image_tag "ajax-loader-bar.gif" %><br/>
+      <%= image_tag "ajax-loader-bar.gif", :alt => '' %><br/>
       <%= before_label(:loading_submission, "Loading Submission") %><span class="submission_name">&nbsp;</span>...
     </div>
     <div class="uploading_file" style="text-align: center;">
-      <%= image_tag "ajax-loader-bar.gif" %><br/>
+      <%= image_tag "ajax-loader-bar.gif", :alt => '' %><br/>
       <%= before_label(:uploading_file, "Uploading") %><span class="file_name">&nbsp;</span>...
     </div>
-    <% form_for :attachment, :url => context_url(@portfolio.user, :controller => :files, :action => :create, :format => "text"), :html => {:id => "upload_file_form"} do |f| %>
+    <%= form_for :attachment, :url => context_url(@portfolio.user, :controller => :files, :action => :create, :format => "text"), :html => {:id => "upload_file_form"} do |f| %>
     <% end %>
-    <iframe class="submission_preview" style="border: 1px solid #aaa; width: 95%; height: 300px; display: block; margin-left: auto; margin-right: auto;" src="about:blank">
+    <iframe class="submission_preview" style="border: 1px solid #aaa; width: 95%; height: 300px; display: block; margin-left: auto; margin-right: auto;" src="about:blank" title="<%= t('Preview') %>">
     </iframe>
   </div>
   <div style="display: none;">
@@ -319,7 +339,7 @@
   <% end %>
 
 <% end %>
-<% form_for @portfolio, :url => eportfolio_path(@portfolio), :html => {:style => "display: none; position: relative;", :id => "edit_eportfolio_form"} do |f| %>
+<%= form_for @portfolio, :url => eportfolio_path(@portfolio), :html => {:style => "display: none; position: relative;", :id => "edit_eportfolio_form"} do |f| %>
 <table class="formtable">
   <tr>
     <td><%= f.label :name, before_label(:eportfolio_name, "ePortfolio Name") %></td>
@@ -331,8 +351,9 @@
     </td>
   </tr>
   <tr>
-    <td colspan="2" class="button-container-right-aligned">
-      <button type="submit" class="button"><%= t('buttons.update_eportfolio', "Update ePortfolio") %></button>
+    <td colspan="2" class="button-container">
+      <button type="submit" class="btn btn-primary"><%= t('buttons.update_eportfolio', "Update ePortfolio") %></button>
+      <button class="btn dialog_closer"><%= t('#buttons.cancel', "Cancel") %></button>
     </td>
   <td>
 </table>
@@ -361,12 +382,12 @@
     %></p>
   <% end %>
   <% if @page.allow_comments %>
-    <% form_for :page_comment, :url => eportfolio_entry_page_comments_path(@portfolio.id, @page.id), :html => {:id => "add_page_comment_form", :style => "margin-top: 20px;"} do |f| %>
+    <%= form_for :page_comment, :url => eportfolio_entry_page_comments_path(@portfolio.id, @page.id), :html => {:id => "add_page_comment_form", :style => "margin-top: 20px;"} do |f| %>
       <h3><%= before_label(:add_comment, "Add a New Comment") %></h3>
       <% if @current_user %>
         <%= f.text_area :message, :style => "width: 400px; height: 75px;" %>
         <div class="button-container">
-          <button type="submit" class="button"><%= t('buttons.add_comment', "Add Comment") %></button>
+          <button type="submit" class="btn btn-primary"><i class="icon-discussion"></i> <%= t('buttons.add_comment', "Add Comment") %></button>
         </div>
       <% else %>
         <div style="text-align: center; font-size: 1.2em; margin: 10px;">
@@ -380,7 +401,7 @@
 <% end %>
 <% if @owner_view %>
   <div style="text-align: left; font-size: 1.2em; margin: 30px 10px 0;">
-    <a href="<%= eportfolio_export_portfolio_path(@portfolio.id) %>" class="download_eportfolio_link download"><%= t('links.download_eportfolio', "Download the contents of this ePortfolio as a zip file") %></a>
+    <a href="<%= eportfolio_export_portfolio_path(@portfolio.id) %>" class="download_eportfolio_link icon-zipped"><%= t('links.download_eportfolio', "Download the contents of this ePortfolio as a zip file") %></a>
     <div style="display: none; font-size: 1.2em;" id="downloading_eportfolio_message">
       <span class="message">
         <%= t('headers.export_progress', "Collecting ePortfolio resources. this may take a while if you have a lot of files in your ePortfolio.") %>
@@ -391,16 +412,16 @@
     </div>
   </div>
   <div style="text-align: left; font-size: 1.2em; margin: 30px 10px 0;">
-    <a href="<%= eportfolio_url(@portfolio.id) %>" class="delete_eportfolio_link delete"><%= t('links.delete', "Delete this ePortfolio") %></a>
+    <a href="<%= eportfolio_url(@portfolio.id) %>" class="delete_eportfolio_link icon-trash"><%= t('links.delete', "Delete this ePortfolio") %></a>
   </div>
-  <% form_tag eportfolio_url(@portfolio.id), {:method => :delete, :id => "delete_eportfolio_form", :style => "margin-top: 20px; margin-left: 20px; display: none;"} do %>
+  <%= form_tag eportfolio_url(@portfolio.id), {:method => :delete, :id => "delete_eportfolio_form", :style => "margin-top: 20px; margin-left: 20px; display: none;"} do %>
     <%= t(:delete_confirm, {
         :one => "You currently have 1 page in this ePortfolio. Are you sure you want to delete the entire ePortfolio?",
         :other => "You currently have %{count} pages in this ePortfolio. Are you sure you want to delete the entire ePortfolio?"
       }, :count => @portfolio.eportfolio_entries.count) %>
     <div class="button-container">
-      <button type="submit" class="button"><%= t('buttons.delete', "Delete ePortfolio") %></button>
-      <button type="button" class="button-secondary delete_eportfolio_link"><%= t('#buttons.cancel', "Cancel") %></button>
+      <button type="submit" class="btn"><%= t('buttons.delete', "Delete ePortfolio") %></button>
+      <button type="button" class="btn button-secondary delete_eportfolio_link"><%= t('#buttons.cancel', "Cancel") %></button>
     </div>
   <% end %>
 <% end %>
@@ -408,7 +429,7 @@
   <a href="<%= eportfolio_entry_view_file_path(@portfolio.id, @page.id, "{{ uuid }}") %>" class="eportfolio_download_url">&nbsp;</a>
   <div id="eportfolio_category_id"><%= @category.id %></div>
   <div id="eportfolio_view_image" style="text-align: center;">
-    <a href="#" class="eportfolio_download" title="<%= t('links.view_original', "View the Original File") %>"><img src="#" class="eportfolio_image"/><a/>
+    <a href="#" class="eportfolio_download" title="<%= t('links.view_original', "View the Original File") %>"><img src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" class="eportfolio_image"/><a/>
   </div>
   <div id="eportfolio_download_file" style="text-align: center;">
     <a href="#" class="eportfolio_download"><%= t('links.download_file', "Click here to download %{filename}", :filename => raw('<span class="filename">&nbsp;</span>')) %></a>

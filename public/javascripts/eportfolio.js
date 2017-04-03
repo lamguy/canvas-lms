@@ -21,70 +21,144 @@
 // they'll create elements with the same class names we're using to
 // find endpoints for updating settings and content.  However, since
 // only the portfolio's owner can set this content, it seems like
-// the worst they can do is override endpoint urls for eportfolio 
-// settings on their own personal eportfolio, they can't 
+// the worst they can do is override endpoint urls for eportfolio
+// settings on their own personal eportfolio, they can't
 // affect anyone else
 
 define([
   'i18n!eportfolio',
   'jquery' /* $ */,
+  'react',
+  'react-dom',
+  'compiled/userSettings',
+  'jsx/shared/rce/RichContentEditor',
+  'jsx/eportfolios/MoveToDialog',
+  'eportfolios/eportfolio_section',
   'jquery.ajaxJSON' /* ajaxJSON */,
   'jquery.inst_tree' /* instTree */,
   'jquery.instructure_forms' /* formSubmit, getFormData, formErrors, errorBox */,
   'jqueryui/dialog',
+  'compiled/jquery/fixDialogButtons' /* fix dialog formatting */,
+  'compiled/jquery.rails_flash_notifications' /* $.screenReaderFlashMessageExclusive */,
   'jquery.instructure_misc_helpers' /* replaceTags, scrollSidebar */,
   'jquery.instructure_misc_plugins' /* confirmDelete, showIf */,
   'jquery.loadingImg' /* loadingImage */,
   'jquery.templateData' /* fillTemplateData, getTemplateData */,
-  'compiled/tinymce',
-  'tinymce.editor_box' /* editorBox */,
   'vendor/jquery.scrollTo' /* /\.scrollTo/ */,
   'jqueryui/progressbar' /* /\.progressbar/ */,
   'jqueryui/sortable' /* /\.sortable/ */
-], function(I18n, $) {
+], function(I18n, $, React, ReactDOM, userSettings, RichContentEditor, MoveToDialog, EportfolioSection) {
+
+  // optimization so user isn't waiting on RCS to
+  // respond when they hit edit
+  RichContentEditor.preloadRemoteModule()
+
+  var ePortfolioValidations = {
+    object_name: 'eportfolio',
+    property_validations: {
+      'name': function(value){
+        if (!value || value.trim() == '') { return I18n.t("errors.name_required", "Name is required")}
+        if (value && value.length > 255) { return I18n.t("errors.name_too_long", "Name is too long")}
+      }
+    }
+  };
 
   function ePortfolioFormData() {
     var data = $("#edit_page_form").getFormData({
-      object_name: "eportfolio_entry", 
+      object_name: "eportfolio_entry",
       values: ['eportfolio_entry[name]', 'eportfolio_entry[allow_comments]', 'eportfolio_entry[show_comments]']
     });
     var idx = 0;
     $("#edit_page_form .section").each(function() {
-      var section_type = $(this).getTemplateData({textValues: ['section_type']}).section_type;
-      if(section_type == "rich_text" || section_type == "html" || $(this).hasClass('read_only')) {
+      var $section = $(this)
+      var section_type = $section.getTemplateData({textValues: ['section_type']}).section_type;
+      if(section_type == "rich_text" || section_type == "html" || $section.hasClass('read_only')) {
         idx++;
         var name = "section_" + idx;
-        if(section_type == "rich_text") {
-          data[name + '[section_type]'] = "rich_text";
-          data[name + '[content]'] = $(this).find(".edit_section").editorBox('get_code');
-        } else if(section_type == "html") {
-          data[name + '[section_type]'] = "html";
-          data[name + '[content]'] = $(this).find(".edit_section").val();
-        } else if(section_type == "submission") {
-          data[name + '[section_type]'] = "submission";
-          data[name + '[submission_id]'] = $(this).getTemplateData({textValues: ['submission_id']}).submission_id;
-        } else if(section_type == "attachment") {
-          data[name + '[section_type]'] = "attachment";
-          data[name + '[attachment_id]'] = $(this).getTemplateData({textValues: ['attachment_id']}).attachment_id;
-        }
+        var sectionContent = EportfolioSection.fetchContent($section, section_type, name)
+        data = $.extend(data, sectionContent)
       }
     });
     data['section_count'] = idx;
     return data;
   }
+
+  function _saveList(parent, prefix, anchor) {
+    var ids = $(parent).sortable('toArray');
+    var valid_ids = [];
+    for(var idx in ids) {
+      var id = ids[idx];
+      id = id.substring(prefix.length);
+      if(!isNaN(id)) { valid_ids.push(id); }
+    }
+    var order = valid_ids.join(",");
+    var data = {order: order};
+    $(parent).loadingImage({image_size: 'small'});
+    $.ajaxJSON($(anchor).attr('href'), 'POST', data, function(data) {
+      $(parent).loadingImage('remove');
+    });
+  }
+
+  function saveSectionList() {
+    _saveList("#section_list", "section_", ".reorder_sections_url")
+  }
+
+  function savePageList() {
+    _saveList("#page_list", "page_", ".reorder_pages_url")
+  }
+
+  function showMoveDialog(source, destinations, triggerElement, dialogLabel, onMove) {
+    var appElement = document.querySelector('#application')
+    var modalRoot = document.querySelector('#eportfolios_move_to_modal_root')
+    if (!modalRoot) {
+      $('#application').append('<div id="eportfolios_move_to_modal_root"></div>')
+      modalRoot = document.querySelector('#eportfolios_move_to_modal_root')
+    }
+    ReactDOM.render(React.createElement(MoveToDialog, {
+      source: source,
+      destinations: destinations,
+      appElement: appElement,
+      triggerElement: triggerElement,
+      header: dialogLabel,
+      onClose: function() {
+        setTimeout(function() { ReactDOM.unmountComponentAtNode(modalRoot) })
+      },
+      onMove: onMove
+    }), modalRoot)
+  }
+
   $(document).ready(function() {
     $(".portfolio_settings_link").click(function(event) {
       event.preventDefault();
       $("#edit_eportfolio_form").dialog({
         width: "auto",
         title: I18n.t('eportfolio_settings', "ePortfolio Settings")
+      }).fixDialogButtons();
+    });
+    // Add ePortfolio related
+    $(".add_eportfolio_link").click(function(event) {
+      event.preventDefault();
+      $("#whats_an_eportfolio").slideToggle();
+      $("#add_eportfolio_form").slideToggle(function() {
+        $(this).find(":text:first").focus().select();
       });
     });
+    $("#add_eportfolio_form .cancel_button").click(function() {
+      $("#add_eportfolio_form").slideToggle();
+      $("#whats_an_eportfolio").slideToggle();
+    });
+    $('#add_eportfolio_form').submit(function(){
+      var $this = $(this);
+      var result = $this.validateForm(ePortfolioValidations);
+      if(!result) {
+        return false;
+      }
+    });
+    // Edit ePortfolio related
     $("#edit_eportfolio_form .cancel_button").click(function(event) {
       $("#edit_eportfolio_form").dialog('close');
     });
-    $("#edit_eportfolio_form").formSubmit({
-      object_name: 'eportfolio', 
+    $("#edit_eportfolio_form").formSubmit($.extend(ePortfolioValidations, {
       beforeSubmit: function(data) {
         $(this).loadingImage();
       },
@@ -92,7 +166,7 @@ define([
         $(this).loadingImage('remove');
         $(this).dialog('close');
       }
-    });
+    }));
     $(".edit_content_link").click(function(event) {
       event.preventDefault();
       $(".edit_content_link_holder").hide();
@@ -108,16 +182,16 @@ define([
         sectionData.section_content = $.trim(sectionData.section_content);
         var section_type = sectionData.section_type;
         var edit_type = "edit_" + section_type + "_content";
-        
+
         var $edit = $("#edit_content_templates ." + edit_type).clone(true);
         $section.append($edit.show());
         if(edit_type == "edit_html_content") {
           $edit.find(".edit_section").attr('id', 'edit_' + $section.attr('id'));
           $edit.find(".edit_section").val(sectionData.section_content);
         } else if(edit_type == "edit_rich_text_content") {
-          $edit.find(".edit_section").attr('id', 'edit_' + $section.attr('id'));
-          $edit.find(".edit_section").editorBox()
-            .editorBox('set_code', sectionData.section_content);
+          var $richText = $edit.find(".edit_section")
+          $richText.attr('id', 'edit_' + $section.attr('id'));
+          RichContentEditor.loadNewEditor($richText, {defaultContent: sectionData.section_content})
         }
       });
       $("#edit_page_form :text:first").focus().select();
@@ -134,25 +208,30 @@ define([
       $("#page_content .section.failed").remove();
       $("#edit_page_form,#page_content,#page_sidebar").addClass('previewing');
       $("#page_content .section").each(function() {
-        var $preview = $(this).find(".section_content").clone().removeClass('section_content').addClass('preview_content').addClass('preview_section');
-        var section_type = $(this).getTemplateData({textValues: ['section_type']}).section_type;
+        var $section = $(this)
+        var $preview = $section.find(".section_content").clone().removeClass('section_content').addClass('preview_content').addClass('preview_section');
+        var section_type = $section.getTemplateData({textValues: ['section_type']}).section_type;
         if(section_type == "html") {
-          $preview.html($(this).find(".edit_section").val());
-          $(this).find(".section_content").after($preview);
+          $preview.html($section.find(".edit_section").val());
+          $section.find(".section_content").after($preview);
         } else if (section_type == "rich_text") {
-          $preview.html($(this).find(".edit_section").editorBox('get_code'));
-          $(this).find(".section_content").after($preview);
+          var $richText = $section.find('.edit_section)');
+          var editorContent = RichContentEditor.callOnRCE($richText, "get_code");
+          if (editorContent){ $preview.html($.raw(editorContent)) }
+          $section.find(".section_content").after($preview);
         }
       });
     }).end().find(".keep_editing_button").click(function() {
       $("#edit_page_form,#page_content,#page_sidebar").removeClass('previewing');
       $("#page_content .preview_section").remove();
     }).end().find(".cancel_button").click(function() {
+      $("#edit_page_form .edit_rich_text_content .edit_section").each(function() {
+        RichContentEditor.destroyRCE($(this));
+      });
       $("#edit_page_form,#page_content,#page_sidebar").removeClass('editing');
       $("#page_content .section.unsaved").remove();
       $(".edit_content_link_holder").show();
       $("#edit_page_form .edit_section").each(function() {
-        $(this).editorBox('destroy');
         $(this).remove();
       });
       $("#page_content .section .form_content").remove();
@@ -163,30 +242,40 @@ define([
         $("#page_content .section.unsaved").removeClass('unsaved');
         $("#page_content .section.failed").remove();
         $("#page_content .section").each(function() {
-          var section_type = $(this).getTemplateData({textValues: ['section_type']}).section_type;
+          var $section = $(this)
+          var section_type = $section.getTemplateData({textValues: ['section_type']}).section_type;
           if(section_type == "rich_text" || section_type == "html") {
-            var code = $(this).find(".edit_section").val();
-            if(section_type == "rich_text") { 
-              code = $(this).find(".edit_section").editorBox('get_code');
+            var code = $section.find(".edit_section").val();
+            if(section_type == "rich_text") {
+              var $richText = $section.find('.edit_section')
+              var editorContent = RichContentEditor.callOnRCE($richText, "get_code")
+              if (editorContent){
+                $section.find(".section_content").html($.raw(editorContent));
+              }
+              RichContentEditor.destroyRCE($richText);
+            } else {
+              $section.find(".section_content").html($.raw(code));
             }
-            $(this).find(".section_content").html(code);
-          } else if(!$(this).hasClass('read_only')) {
-            $(this).remove();
+          } else if(!$section.hasClass('read_only')) {
+            $section.remove();
           }
         });
         var data = ePortfolioFormData();
         return data;
       },
       beforeSubmit: function(data) {
+        $("#edit_page_form .edit_rich_text_content .edit_section").each(function() {
+          RichContentEditor.destroyRCE($(this));
+        });
         $("#edit_page_form,#page_content,#page_sidebar").removeClass('editing').removeClass('previewing');
-        $("#page_content .section.unsaved").remove();
+        $("#page_content .section.unsaved,#page_content .section .form_content").remove();
         $("#edit_page_form .edit_section").each(function() {
-          $(this).editorBox('destroy');
           $(this).remove();
         });
         $(this).loadingImage();
       },
       success: function(data) {
+        $(document).triggerHandler('page_updated', data);
         $(".edit_content_link_holder").show();
         if(data.eportfolio_entry.allow_comments) {
           $("#page_comments_holder").slideDown('fast');
@@ -196,14 +285,16 @@ define([
     });
     $("#edit_page_form .switch_views_link").click(function(event) {
       event.preventDefault();
-      $("#edit_page_content").editorBox('toggle');
+      RichContentEditor.callOnRCE($("#edit_page_content"), "toggle")
+      //  todo: replace .andSelf with .addBack when JQuery is upgraded.
+      $(this).siblings(".switch_views_link").andSelf().toggle();
     });
     $("#edit_page_sidebar .add_content_link").click(function(event) {
       event.preventDefault();
       $("#edit_page_form .keep_editing_button:first").click();
-      var $section = $("#page_section_blank").clone(true).attr('id', 'page_section_' + sectionCountIdx);
+      var $section = $("#page_section_blank").clone(true).attr('id', 'page_section_' + ENV.SECTION_COUNT_IDX);
       $section.addClass('unsaved');
-      $section.attr('id', 'page_section_' + sectionCountIdx++);
+      $section.attr('id', 'page_section_' + ENV.SECTION_COUNT_IDX++);
       $("#page_content").append($section);
       var section_type = "rich_text";
       var section_type_name = I18n.t('#eportfolios._page_section.section_types.rich_text', "Rich Text Content")
@@ -219,22 +310,24 @@ define([
       }
       var edit_type = "edit_" + section_type + "_content";
       $section.fillTemplateData({
-        data: {section_type: section_type, section_type_name: section_type_name} 
+        data: {section_type: section_type, section_type_name: section_type_name}
       });
       var $edit = $("#edit_content_templates ." + edit_type).clone(true);
       $section.append($edit.show());
       if(edit_type == "edit_html_content") {
         $edit.find(".edit_section").attr('id', 'edit_' + $section.attr('id'));
       } else if(edit_type == "edit_rich_text_content") {
-        $edit.find(".edit_section").attr('id', 'edit_' + $section.attr('id'));
-        $edit.find(".edit_section").editorBox();
+        var $richText = $edit.find(".edit_section")
+        $richText.attr('id', 'edit_' + $section.attr('id'));
+        RichContentEditor.loadNewEditor($richText, {focus: true, defaultContent: ""})
       }
       $section.hide().slideDown('fast', function() {
         $("html,body").scrollTo($section);
-        if(section_type == "rich_text") {
-          $edit.find(".edit_section").editorBox('focus', true);
-        } else if(section_type == "html") {
+        if (section_type == "html") {
           $edit.find(".edit_section").focus().select();
+        }
+        if (section_type == "submission") {
+          $edit.find(".submission:first .text").focus()
         }
       });
     });
@@ -253,15 +346,17 @@ define([
       helper: 'clone',
       axis: 'y',
       start: function(event, ui) {
-        var $item = $(ui.item);
-        if($item.getTemplateData({textValues: ['section_type']}).section_type == 'rich_text') {
-          $item.find("textarea").editorBox('destroy');
+        var $section = $(ui.item);
+        if($section.getTemplateData({textValues: ['section_type']}).section_type == 'rich_text') {
+          var $richText = $section.find('.edit_section');
+          RichContentEditor.destroyRCE($richText);
         }
       },
       stop: function(event, ui) {
-        var $item = $(ui.item);
-        if($item.getTemplateData({textValues: ['section_type']}).section_type == 'rich_text') {
-          $item.find("textarea").editorBox();
+        var $section = $(ui.item);
+        if($section.getTemplateData({textValues: ['section_type']}).section_type == 'rich_text') {
+          var $richText = $section.find('.edit_section');
+          RichContentEditor.loadNewEditor($richText)
         }
       }
     });
@@ -275,7 +370,8 @@ define([
       var $section = $(this).parents(".section");
       var $selection = $section.find(".submission_list li.active-leaf:first");
       if($selection.length === 0) { return; }
-      var url = $selection.find(".submission_preview_url").attr('href');
+      var url = $selection.find(".submission_info").attr('href');
+      var title = $selection.find(".submission_info").text();
       var id = $selection.attr('id').substring(11);
       $section.fillTemplateData({
         data: {submission_id: id}
@@ -285,23 +381,25 @@ define([
       $frame.attr('src', url);
       $section.append($frame);
       $section.addClass('read_only');
+      $(this).focus()
+      $.screenReaderFlashMessageExclusive(I18n.t('submission added: %{title}', { title: title }))
     }).delegate('.upload_file_button', 'click', function(event) {
       event.preventDefault();
       event.stopPropagation();
       var $section = $(this).parents(".section")
       var $message = $("#edit_content_templates").find(".uploading_file").clone();
       var $upload = $(this).parents(".section").find(".file_upload");
-      
+
       if(!$upload.val() && $section.find(".file_list .leaf.active").length === 0) {
         return;
       }
-      
+
       $message.fillTemplateData({
         data: {file_name: $upload.val()}
       });
       $(this).parents(".section").find(".section_content").empty().append($message.show());
       var $form = $("#upload_file_form").clone(true).attr('id', '');
-      $("body").append($form.hide());
+      $("body").append($form.css({position: 'absolute', zIndex: -1}));
       $form.data('section', $section);
       $form.find(".file_upload").remove().end()
         .append($upload)
@@ -310,6 +408,14 @@ define([
     });
     $("#upload_file_form").formSubmit({
       fileUpload: true,
+      fileUploadOptions: {
+        preparedFileUpload: true,
+        upload_only: true,
+        singleFile: true,
+        context_code: ENV.context_code,
+        folder_id: ENV.folder_id,
+        formDataTarget: 'uploadDataUrl'
+      },
       object_name: 'attachment',
       processData: function(data) {
         if(!data.uploaded_data) {
@@ -375,8 +481,9 @@ define([
       },
       error: function(data) {
         var $section = $(this).data("section");
-        $section.find(".uploading_file").html(I18n.t('errors.upload_failed', "Upload Failed."));
+        $section.find(".uploading_file").text(I18n.t('errors.upload_failed', "Upload Failed."));
         $section.addClass('failed');
+        $(this).remove();
         $section.formErrors(data.errors || data);
       }
     });
@@ -400,7 +507,7 @@ define([
             $(this).find(":text:visible:first").val(assignment).focus().select();
             $(document).triggerHandler('submission_dialog_opened');
           }
-        });
+        }).fixDialogButtons();
       }
     });
     $("#add_submission_form .cancel_button").click(function() {
@@ -441,8 +548,7 @@ define([
         $("#page_select_list").append($page.show());
       });
     }).triggerHandler('change');
-    $.scrollSidebar();
-    
+
     $(".delete_comment_link").click(function(event) {
       event.preventDefault();
       $(this).parents(".comment").confirmDelete({
@@ -480,7 +586,7 @@ define([
         $(this).addClass('active');
         if($(this).hasClass('file')) {
           var id = $(this).getTemplateData({textValues: ['id']}).id;
-          
+
         }
       }
     });
@@ -503,7 +609,6 @@ define([
   function saveObject($obj, type) {
     var isSaving = $obj.data('event_pending');
     if(isSaving || $obj.length === 0) { return; }
-    $obj.data('event_pending', true);
     var method = "PUT";
     var url = $obj.find(".rename_" + type + "_url").attr('href');
     if($obj.attr('id') == type + '_new') {
@@ -528,6 +633,7 @@ define([
     if(method == "POST") {
       $obj.attr('id', type + '_saving');
     }
+    $obj.data('event_pending', true);
     $obj.addClass('event_pending');
     $.ajaxJSON(url, method, data, function(data) {
       $obj.removeClass('event_pending');
@@ -546,7 +652,27 @@ define([
       });
       $obj.data('event_pending', false);
       countObjects(type);
-    });
+    },
+    // error callback
+    function(data, xhr, textStatus, errorThrown){
+      $obj.removeClass('event_pending');
+      $obj.data('event_pending', false);
+      var name_message = I18n.t("errors.section_name_invalid", "Section name is not valid")
+      if (xhr['name'] && xhr['name'].length > 0 && xhr['name'][0]['message'] == 'too_long') {
+        name_message = I18n.t("errors.section_name_too_long", "Section name is too long");
+      }
+      if ($obj.hasClass('unsaved')) {
+        alert(name_message);
+        $obj.remove();
+      }
+      else {
+        // put back in "edit" mode
+        $obj.find('.edit_section_link').click();
+        $obj.find('#section_name').errorBox(name_message).css('z-index', 20)
+      }
+    },
+    // options
+    {skipDefaultError: true});
     return true;
   }
   function editObject($obj, type) {
@@ -568,10 +694,12 @@ define([
   function countObjects(type) {
     var cnt = $("#" + type + "_list ." + type + ":not(.unsaved)").length;
     if(cnt > 1) {
-      $("#" + type + "_list .remove_page_link").css('display', '');
+      $("#" + type + "_list .remove_" + type + "_link").css('display', '');
+      $("#" + type + "_list .move_" + type + "_link").css('display', '');
     } else {
-      $("#" + type + "_list .remove_page_link").hide();
-    }  
+      $("#" + type + "_list .remove_" + type + "_link").hide();
+      $("#" + type + "_list .move_" + type + "_link").hide();
+    }
   }
   $(document).ready(function() {
     countObjects('page');
@@ -590,11 +718,21 @@ define([
         $("#page_list").append($page.show());
       }
       $page.removeClass('unsaved');
+      $page.find(".settings-label").text(I18n.t("Settings for %{title}", { title: entry.name }))
       $page.fillTemplateData({
         data: entry,
         id: 'page_' + entry.id,
         hrefValues: ['id', 'slug']
       });
+      // update links (unable to take advantage of fillTemplateData's hrefValues for updates)
+      if(event.type == "page_updated"){
+        var page_url = $("#page_blank .page_url").attr('href');
+        var rename_page_url = $("#page_blank .rename_page_url").attr('href');
+        page_url = $.replaceTags(page_url, 'slug', entry.slug);
+        rename_page_url = $.replaceTags(page_url, 'id', entry.id);
+        $page.find(".page_url").attr('href', page_url);
+        $page.find(".rename_page_url").attr('href', rename_page_url);
+      }
       var $entry = $("#structure_entry_" + entry.id);
       if($entry.length === 0) {
         $entry = $("#structure_entry_blank").clone(true).removeAttr('id');
@@ -604,39 +742,32 @@ define([
         id: 'structure_entry_' + entry.id,
         data: entry
       });
+      var $activePage = $("#eportfolio_entry_" + entry.id);
+      if($activePage.length) {
+        $activePage.fillTemplateData({
+          id: 'eportfolio_entry_' + entry.id,
+          data: entry
+        });
+      }
       countObjects('page');
     });
     $(".manage_pages_link,#section_pages .done_editing_button").click(function(event) {
       event.preventDefault();
       if($("#page_list").hasClass('editing')) {
         $("#page_list").removeClass('editing');
-        $("#page_list .page").attr('title', '');
+        $("#page_list .page_url").attr('title', '');
         $("#page_list").sortable('destroy');
         $("#section_pages").removeClass('editing');
       } else {
         $("#page_list").addClass('editing');
-        $("#page_list .page").attr('title', I18n.t('links.manage_pages', 'Click to edit, drag to reorder'));
+        $("#page_list .page_url").attr('title', I18n.t('Click to edit, drag to reorder'));
         $("#page_list").sortable({
           axis: 'y',
           helper: 'clone',
           stop: function(event, ui) {
             ui.item.addClass('just_dropped');
           },
-          update: function(event, ui) {
-            var ids = $("#page_list").sortable('toArray');
-            var valid_ids = [];
-            for(var idx in ids) {
-              var id = ids[idx];
-              id = parseInt(id.substring(5));
-              if(!isNaN(id)) { valid_ids.push(id); }
-            }
-            var order = valid_ids.join(",");
-            var data = {order: order};
-            $("#page_list").loadingImage({image_size: 'small'});
-            $.ajaxJSON($(".reorder_pages_url").attr('href'), 'POST', data, function(data) {
-              $("#page_list").loadingImage('remove');
-            });
-          }
+          update: savePageList
         });
         $("#section_pages").addClass('editing');
       }
@@ -676,6 +807,33 @@ define([
         }
       });
     });
+    $(".move_page_link").click(function(event) {
+      event.preventDefault();
+
+      var page = $(event.target).closest('.page')
+      var source = {
+        id: page.attr('id'),
+        label: page.find('.name').text()
+      }
+      var otherPages = $('#page_list .page').not(page).not('#page_blank').toArray()
+      var destinations = otherPages.map(function(otherPage) { return {
+        id: $(otherPage).attr('id'),
+        label: $(otherPage).find('.name').text()
+      }})
+
+      var triggerElement = page.find('.page_settings_menu .al-trigger')
+      var dialogLabel = I18n.t('Move Page')
+      var onMove = function(before) {
+        if (before !== '') {
+          $(page).insertBefore($('#' + before))
+        } else {
+          $(page).insertAfter($('#page_list .page:last'))
+        }
+        $('#page_list').sortable('refreshPositions')
+        savePageList()
+      }
+      showMoveDialog(source, destinations, triggerElement, dialogLabel, onMove)
+    });
     $("#page_name").keydown(function(event) {
       if(event.keyCode == 27) { // esc
         hideEditObject('page');
@@ -696,6 +854,79 @@ define([
     });
   });
 
+  var $wizard_box = $("#wizard_box");
+
+  function setWizardSpacerBoxDisplay(action){
+    $("#wizard_spacer_box").height($wizard_box.height() || 0).showIf(action === 'show');
+  }
+
+  var pathname = window.location.pathname;
+  $(".close_wizard_link").click(function(event) {
+    event.preventDefault();
+    userSettings.set('hide_wizard_' + pathname, true);
+
+    $wizard_box.slideUp('fast', function() {
+      $(".wizard_popup_link").slideDown('fast');
+      $('.wizard_popup_link').focus();
+      setWizardSpacerBoxDisplay('hide');
+    });
+
+  });
+
+  $(".wizard_popup_link").click(function(event) {
+    event.preventDefault();
+    $(".wizard_popup_link").slideUp('fast');
+    $wizard_box.slideDown('fast', function() {
+      $wizard_box.triggerHandler('wizard_opened');
+      $wizard_box.focus();
+      $([document, window]).triggerHandler('scroll');
+    });
+  });
+
+  $wizard_box.ifExists(function($wizard_box){
+
+    $wizard_box.bind('wizard_opened', function() {
+      var $wizard_options = $wizard_box.find(".wizard_options"),
+          height = $wizard_options.height();
+      $wizard_options.height(height);
+      $wizard_box.find(".wizard_details").css({
+        maxHeight: height - 5,
+        overflow: 'auto'
+      });
+      setWizardSpacerBoxDisplay('show');
+    });
+
+    $wizard_box.find(".wizard_options_list .option").click(function(event) {
+      var $this = $(this);
+      var $a = $(event.target).closest("a");
+      if($a.length > 0 && $a.attr('href') != "#") { return; }
+      event.preventDefault();
+      $this.parents(".wizard_options_list").find(".option.selected").removeClass('selected');
+      $this.addClass('selected');
+      var $details = $wizard_box.find(".wizard_details");
+      var data = $this.getTemplateData({textValues: ['header']});
+      data.link = data.header;
+      $details.fillTemplateData({
+        data: data
+      });
+      $details.find(".details").remove();
+      $details.find(".header").after($this.find(".details").clone(true).show());
+      var url = $this.find(".header").attr('href');
+      if(url != "#") {
+        $details.find(".link").show().attr('href', url);
+      } else {
+        $details.find(".link").hide();
+      }
+      $details.hide().fadeIn('fast');
+    });
+    setTimeout(function() {
+      if(!userSettings.get('hide_wizard_' + pathname)) {
+        $(".wizard_popup_link.auto_open:first").click();
+      }
+    }, 500);
+  });
+
+
   $(document).ready(function() {
     countObjects('section');
     $(document).bind('section_deleted', function(event, data) {
@@ -709,9 +940,10 @@ define([
       var $section = $("#section_" + category.id);
       if($section.length === 0) {
         $section = $("#section_blank").clone(true).removeAttr('id');
-        $("#section_list").append($section.show());
+        $("#section_list").append($section.css("display", ""));
       }
       $section.removeClass('unsaved');
+      $section.find(".settings-label").text(I18n.t("Settings for %{title}", { title: category.name }))
       $section.fillTemplateData({
         data: category,
         id: 'section_' + category.id,
@@ -740,11 +972,11 @@ define([
       if($("#section_list").hasClass('editing')) {
         $("#section_list").sortable('destroy');
         $("#section_list_manage").removeClass('editing');
-        $("#section_list").removeClass('editing').sortable('disable');
+        $("#section_list").removeClass('editing');
         var manage_sections = I18n.t('buttons.manage_sections', "Manage Sections");
         $(".arrange_sections_link").text(manage_sections).val(manage_sections);
         $(".add_section").hide();
-        $("#section_list > li").attr('title', "");
+        $("#section_list .name").attr('title', "");
       } else {
         $("#section_list_manage").addClass('editing');
         $("#section_list").sortable({
@@ -753,27 +985,13 @@ define([
           stop: function(event, ui) {
             ui.item.addClass('just_dropped');
           },
-          update: function(event, ui) {
-            var ids = $("#section_list").sortable('toArray');
-            var valid_ids = [];
-            for(var idx in ids) {
-              var id = ids[idx];
-              id = parseInt(id.substring(8));
-              if(!isNaN(id)) { valid_ids.push(id); }
-            }
-            var order = valid_ids.join(",");
-            var data = {order: order};
-            $("#section_list").loadingImage({image_size: 'small'});
-            $.ajaxJSON($(".reorder_sections_url").attr('href'), 'POST', data, function(data) {
-              $("#section_list").loadingImage('remove');
-            });
-          }
+          update: saveSectionList
         });
         $("#section_list").addClass('editing').sortable('enable');
         var done_editing = I18n.t('buttons.done_editing', "Done Editing");
         $(".arrange_sections_link").text(done_editing).val(done_editing);
         $(".add_section").show();
-        $("#section_list > li").attr('title', I18n.t('titles.section_list', "Drag to Arrange, Click to Edit"));
+        $("#section_list .name").attr('title', I18n.t('titles.section_list', "Drag to Arrange, Click to Edit"));
       }
     });
     $(".add_section_link").click(function(event) {
@@ -783,7 +1001,8 @@ define([
       editObject($section, 'section');
     });
     $(".remove_section_link").click(function(event) {
-      event.preventDefault();
+      event.preventDefault()
+
       hideEditObject('section');
       $(this).parents("li").confirmDelete({
         message: I18n.t('confirm_delete_section', "Delete this section and all its pages?"),
@@ -797,6 +1016,34 @@ define([
         }
       });
     });
+    $(".move_section_link").click(function(event) {
+      event.preventDefault();
+
+      var section = $(event.target).closest('.section')
+      var source = {
+        id: section.attr('id'),
+        label: section.find('.name').text()
+      }
+      var otherSections = $('#section_list .section').not(section).not('#section_blank').toArray()
+      var destinations = otherSections.map(function(otherSection) { return {
+        id: $(otherSection).attr('id'),
+        label: $(otherSection).find('.name').text()
+      }})
+      var dialogLabel = I18n.t('Move Section')
+
+      var triggerElement = section.find('.section_settings_menu .al-trigger')
+
+      var onMove = function(before) {
+        if (before !== '') {
+          $(section).insertBefore(document.getElementById(before))
+        } else {
+          $(section).insertAfter($('#section_list .section:last'))
+        }
+        $('#section_list').sortable('refreshPositions')
+        saveSectionList()
+      }
+      showMoveDialog(source, destinations, triggerElement, dialogLabel, onMove)
+    })
     $("#section_list").delegate('.edit_section_link', 'click', function(event) {
       if($(this).parents("li").hasClass('unsaved')) {
         event.preventDefault();
@@ -839,7 +1086,7 @@ define([
       var url = $(this).attr('href');
       var errorCount = 0;
       var check = function(first) {
-        req_url = url;
+        var req_url = url;
         if (first) {
           req_url = url + "?compile=1";
         }

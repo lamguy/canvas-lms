@@ -20,12 +20,22 @@ module CC::Importer::Standard
     include CC::Importer
 
     def create_file_map
+      new_assignments = []
       resources_by_type(WEBCONTENT, "associatedcontent").each do |res|
+        if res[:intended_use] == "assignment"
+          path = get_full_path(res[:href])
+          if path && File.exists?(path) && Attachment.mimetype(path) =~ /html/
+            new_assignments << {:migration_id => res[:migration_id], :description => File.read(path)}
+          end
+        end
+
         main_file = {}
         main_file[:migration_id] = res[:migration_id]
         main_file[:path_name] = res[:href]
-        # todo check for CC permissions on the file
-        
+        if res[:intended_user_role] == 'Instructor'
+          main_file[:locked] = true
+        end
+
         # add any extra files in this resource
         res[:files].each do |file_ref|
           next unless file_ref[:href]
@@ -50,25 +60,36 @@ module CC::Importer::Standard
           add_course_file(main_file, true)
         end
       end
+
+      new_assignments.each do |a|
+        a[:description] = replace_urls(a[:description])
+        @course[:assignments] << a
+      end
     end
 
     def package_course_files(file_map)
       zip_file = File.join(@base_export_dir, 'all_files.zip')
       make_export_dir
 
-      Zip::ZipFile.open(zip_file, 'w') do |zipfile|
+      Zip::File.open(zip_file, 'w') do |zipfile|
         file_map.each_value do |val|
+          next if zipfile.entries.include?(val[:path_name])
+
           file_path = File.join(@unzipped_file_path, val[:path_name])
-          if File.exists?(file_path)
-            zipfile.add(val[:path_name], file_path)
+          if File.exist?(file_path)
+            zipfile.add(val[:path_name], file_path) if !File.directory?(file_path)
           else
-            # todo add warning
+            web_file_path = File.join(@unzipped_file_path, WEB_RESOURCES_FOLDER, val[:path_name])
+            if File.exist?(web_file_path)
+              zipfile.add(val[:path_name], web_file_path) if !File.directory?(web_file_path)
+            else
+              val[:errored] = true
+            end
           end
         end
       end
 
       File.expand_path(zip_file)
     end
-
   end
 end

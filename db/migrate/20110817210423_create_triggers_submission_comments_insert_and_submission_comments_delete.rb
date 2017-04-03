@@ -2,7 +2,9 @@
 # While you can edit this file, any changes you make to the definitions here
 # will be undone by the next auto-generated trigger migration.
 
-class CreateTriggersSubmissionCommentsInsertAndSubmissionCommentsDelete < ActiveRecord::Migration
+class CreateTriggersSubmissionCommentsInsertAndSubmissionCommentsDelete < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     create_trigger("submission_comments_after_insert_row_tr", :generated => true, :compatibility => 1).
         on("submission_comments").

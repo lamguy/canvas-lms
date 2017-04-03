@@ -1,5 +1,7 @@
 define([
+  'compiled/util/round',
   'i18n!grading_standards',
+  'jsx/shared/helpers/numberHelper',
   'jquery' /* $ */,
   'jquery.ajaxJSON' /* ajaxJSON */,
   'jquery.instructure_forms' /* fillFormData, getFormData */,
@@ -8,7 +10,10 @@ define([
   'compiled/jquery.rails_flash_notifications',
   'jquery.templateData' /* fillTemplateData, getTemplateData */,
   'vendor/jquery.scrollTo' /* /\.scrollTo/ */
-], function(I18n, $) {
+], function (round, I18n, numberHelper, $) {
+  function roundedNumber (val) {
+    return I18n.n(round(val, round.DEFAULT));
+  }
 
   $(document).ready(function() {
     $(".add_standard_link").click(function(event) {
@@ -22,7 +27,10 @@ define([
       $("#edit_letter_grades_form").dialog({
         title: I18n.t('titles.grading_scheme_info', "View/Edit Grading Scheme"),
         width: 600,
-        height: 310
+        dialogClass: 'form-inline grading-standard-dialog',
+        resizable: false,
+        open: function () { $('.grading-standard-dialog').find('.ui-dialog-titlebar-close')[0].focus() },
+        close: function() { $(event.target).focus() }
       });
     });
     $(".grading_standard .delete_grading_standard_link").click(function(event) {
@@ -96,6 +104,7 @@ define([
       event.preventDefault();
       var $standard = $(this).parents(".grading_standard");
       $standard.addClass('editing');
+      $standard.find(".max_score_cell").attr('tabindex', '0');
       if($(this).hasClass('read_only')) {
         $standard.attr('id', 'grading_standard_blank');
       }
@@ -132,7 +141,7 @@ define([
         var url = $find.find(".grading_standards_url").attr('href');
         $.ajaxJSON(url, 'GET', {}, function(data) {
           if(data.length === 0) {
-            $find.find(".loading_message").text(I18n.t('no_grading_standards', "No grading standards found"));
+            $find.find(".loading_message").text(I18n.t('no_grading_standards', "No grading schemes found"));
           } else {
             $find.find(".loading_message").remove();
             for(var idx in data) {
@@ -150,8 +159,11 @@ define([
               }).data('context_code', standard.context_code);
               $standard.removeClass('blank');
               for(var jdx = 0; jdx < standard.data.length; jdx++) {
-                var list = standard.data[jdx];
-                var row = {name: list[0], value: (jdx == 0 ? 100 : '< ' + standard.data[jdx - 1][1] * 100), next_value: list[1] * 100};
+                var row = {
+                  name: standard.data[jdx][0],
+                  value: jdx === 0 ? roundedNumber(100) : '< ' + roundedNumber(standard.data[jdx - 1][1] * 100),
+                  next_value: roundedNumber(standard.data[jdx][1] * 100)
+                };
                 var $row = $standard.find(".details_row.blank:first").clone(true);
                 $row.removeClass('blank');
                 $row.fillTemplateData({data: row});
@@ -177,7 +189,7 @@ define([
       var data = [];
       $(this).parents(".grading_standard_brief").find(".details_row:not(.blank)").each(function() {
         var name = $(this).find(".name").text();
-        var val = parseFloat($(this).find(".next_value").text()) / 100.0;
+        var val = numberHelper.parse($(this).find('.next_value').text()) / 100.0;
         if(isNaN(val)) { val = ""; }
         data.push([name, val]);
       });
@@ -194,6 +206,7 @@ define([
       $(this).parents(".grading_standard").removeClass('editing')
         .find(".insert_grading_standard").hide();
       var $standard = $(this).parents(".grading_standard");
+      $standard.find(".max_score_cell").removeAttr('tabindex');
       $standard.find(".to_add").remove();
       $standard.find(".to_delete").removeClass('to_delete').show();
       if($standard.attr('id') == 'grading_standard_new') {
@@ -213,14 +226,18 @@ define([
       var $link = $standard.find(".insert_grading_standard:first").clone(true);
       var $row = $standard.find(".grading_standard_row:first").clone(true).removeClass('blank');
       var $table = $standard.find(".grading_standard_data");
+      var $thead = $table.find('thead');
       $table.empty();
+      $table.append($thead);
       $table.append($link.clone(true).show());
       for(var idx in standard.data) {
         var $row_instance = $row.clone(true);
         var row = standard.data[idx];
         $row_instance.removeClass('to_delete').removeClass('to_add');
         $row_instance.find(".standard_name").val(row[0]).attr('name', 'grading_standard[standard_data][scheme_'+idx+'][name]').end()
-          .find(".standard_value").val(row[1] * 100).attr('name', 'grading_standard[standard_data][scheme_'+idx+'][value]');
+          .find('.standard_value')
+            .val(I18n.n(round((row[1] * 100), 2)))
+            .attr('name', 'grading_standard[standard_data][scheme_' + idx + '][value]');
         $table.append($row_instance.show());
         $table.append($link.clone(true).show());
       }
@@ -241,7 +258,7 @@ define([
           'assignment[grading_type]': 'letter_grade'
         };
         var url = $("#edit_assignment_form").attr('action');
-        $("#edit_assignment_form .grading_standard_id").val(standard.id);
+        $("input.grading_standard_id, ").val(standard.id);
         if($("#update_course_url").length) {
           put_data = {
             'course[grading_standard_id]': standard.id
@@ -250,7 +267,6 @@ define([
         } else if(url && url.match(/assignments$/)) {
           url = null;
         }
-  
         if(url) {
           $.ajaxJSON(url, 'PUT', put_data, function(data) {
             $("#course_form .grading_scheme_set").text((data && data.course && data.course.grading_standard_title) || I18n.t('grading_scheme_currently_set', "Currently Set"));
@@ -269,6 +285,15 @@ define([
         method = 'PUT';
       }
       var data = $standard.find(".standard_title,.grading_standard_row:visible").getFormData();
+      Object.keys(data).forEach(function (key) {
+        var parsedValue;
+        if (/^grading_standard\[.*\]\[value\]$/.test(key)) {
+          parsedValue = numberHelper.parse(data[key]);
+          if (!isNaN(parsedValue)) {
+            data[key] = parsedValue;
+          }
+        }
+      });
       $standard.find("button").attr('disabled', true).filter(".save_button").text(I18n.t('status.saving', "Saving..."));
       $.ajaxJSON(url, method, data, function(data) {
         var standard = data.grading_standard;
@@ -295,6 +320,12 @@ define([
         $(this).prev(".insert_grading_standard").show();
       }
     });
+    $(".grading_standard *").focus(function(event) {
+      $(this).trigger('mouseover');
+      if ($(this).hasClass('delete_row_link')) {
+        $(this).parents(".grading_standard_row").nextAll('.grading_standard_row').first().trigger('mouseover');
+      }
+    });
     $(".grading_standard .insert_grading_standard_link").click(function(event) {
       event.preventDefault();
       if($(this).parents(".grading_standard").find(".grading_standard_row").length > 40) { return; }
@@ -303,7 +334,7 @@ define([
       var $link = $standard.find(".insert_grading_standard:first").clone(true);
       var temp_id = null;
       while(!temp_id || $(".standard_name[name='grading_standard[standard_data][scheme_" + temp_id + "][name]']").length > 0) {
-        temp_id = Math.round(Math.random() * 10000);    
+        temp_id = Math.round(Math.random() * 10000);
       }
       $row.find(".standard_name").val("-").attr('name', 'grading_standard[standard_data][scheme_' + temp_id + '][name]');
       $row.find(".standard_value").attr('name', 'grading_standard[standard_data][scheme_' + temp_id + '][value]');
@@ -330,29 +361,28 @@ define([
     });
     $(".grading_standard input[type='text']").bind('blur change', function() {
       var $standard = $(this).parents(".grading_standard");
-      var val = parseFloat($(this).parents(".grading_standard_row").find(".standard_value").val());
-      // round to 0.1
-      val = Math.round(val * 10) / 10.0;
-      $(this).parents(".grading_standard_row").find(".standard_value").val(val);
+      var val = numberHelper.parse($(this).parents('.grading_standard_row').find('.standard_value').val());
+      val = round(val,2);
+      $(this).parents('.grading_standard_row').find('.standard_value').val(I18n.n(val));
       if(isNaN(val)) { val = null; }
       var lastVal = val || 100;
       var prevVal = val || 0;
       var $list = $standard.find(".grading_standard_row:not(.blank,.to_delete)");
       for(var idx = $list.index($(this).parents(".grading_standard_row")) + 1; idx < $list.length; idx++) {
         var $row = $list.eq(idx);
-        var points = parseFloat($row.find(".standard_value").val());
+        var points = numberHelper.parse($row.find('.standard_value').val());
         if(isNaN(points)) { points = null; }
         if(idx == $list.length - 1) {
           points = 0;
         } else if (!points || points > lastVal - 0.1) {
           points = parseInt(lastVal) - 1;
         }
-        $row.find(".standard_value").val(points);
+        $row.find('.standard_value').val(I18n.n(points));
         lastVal = points;
       }
       for(var idx = $list.index($(this).parents(".grading_standard_row")) - 1; idx  >= 0; idx--) {
         var $row = $list.eq(idx);
-        var points = parseFloat($row.find(".standard_value").val());
+        var points = numberHelper.parse($row.find('.standard_value').val());
         if(isNaN(points)) { points = null; }
         if(idx == $list.length - 1) {
           points = 0;
@@ -361,11 +391,11 @@ define([
           points = parseInt(prevVal) + 1;
         }
         prevVal = points;
-        $row.find(".standard_value").val(points);
+        $row.find('.standard_value').val(I18n.n(points));
       }
       lastVal = 100;
       $list.each(function(idx) {
-        var points = parseFloat($(this).find(".standard_value").val());
+        var points = numberHelper.parse($(this).find('.standard_value').val());
         var idx = $list.index(this);
         if(isNaN(points)) { points = null; }
         if(idx == $list.length - 1) {
@@ -374,33 +404,40 @@ define([
         else if(!points || points > lastVal - 0.1) {
           points = parseInt(lastVal) - 1;
         }
-        $(this).find(".standard_value").val(points);
+        $(this).find('.standard_value').val(I18n.n(points));
         lastVal = points;
       });
       prevVal = 0;
       for(var idx = $list.length - 1; idx  >= 0; idx--) {
         var $row = $list.eq(idx);
-        var points = parseFloat($row.find(".standard_value").val());
+        var points = numberHelper.parse($row.find('.standard_value').val());
         if(isNaN(points)) { points = null; }
         if(idx == $list.length - 1) {
           points = 0;
         }
-        else if(!points || points < prevVal + 0.1) {
+        else if((!points || points < prevVal + 0.1)&& points != 0) {
           points = parseInt(prevVal) + 1;
         }
         prevVal = points;
-        $row.find(".standard_value").val(points);
+        $row.find('.standard_value').val(I18n.n(points));
       }
       $list.each(function(idx) {
         var $prev = $list.eq(idx - 1);
         var min_score = 0;
         if($prev && $prev.length > 0) {
-          min_score = parseFloat($prev.find(".standard_value").val());
+          min_score = numberHelper.parse($prev.find('.standard_value').val());
           if(isNaN(min_score)) { min_score = 0; }
-          $(this).find(".edit_max_score").text("< " + min_score);
+          $(this).find('.edit_max_score').text('< ' + I18n.n(min_score));
         }
       });
-      $list.filter(":first").find(".edit_max_score").text(100);
+      $list.filter(':first').find('.edit_max_score').text(I18n.n(100));
+      $list.find('.max_score_cell').each(function() {
+        if (!$(this).data('label')) {
+          $(this).data('label', $(this).attr('aria-label'));
+        }
+        var label = $(this).data('label');
+        $(this).attr('aria-label', label + ' ' + $(this).find('.edit_max_score').text() + '%');
+      });
     });
   });
 });

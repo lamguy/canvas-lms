@@ -1,4 +1,4 @@
-class MoveContentExportNotificationsToMigrationCategory < ActiveRecord::Migration
+class MoveContentExportNotificationsToMigrationCategory < ActiveRecord::Migration[4.2]
   tag :postdeploy
 
   def self.up
@@ -6,7 +6,7 @@ class MoveContentExportNotificationsToMigrationCategory < ActiveRecord::Migratio
   end
 
   def self.down
-    Notification.update_all({ :category => 'Other' }, 
-                            { :name => ['Content Export Finished', 'Content Export Failed'] })
+    Notification.where(:name => ['Content Export Finished', 'Content Export Failed']).
+        update_all(:category => 'Other')
   end
 end

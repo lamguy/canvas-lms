@@ -1,4 +1,4 @@
-require [
+define [
   'jquery'
   'underscore'
   'compiled/behaviors/autocomplete'
@@ -20,16 +20,15 @@ require [
   </div>
   """)
 
-  module 'autocomplete',
-
+  QUnit.module 'autocomplete',
     teardown: ->
       $el.remove()
+      $('#fixtures').empty()
 
   test 'it should create an autocomplete box by reading data attributes', ->
-    $('body').append($el)
+    $('#fixtures').append($el)
     createAutocompletes()
     keys = (key for key of $('#autocomplete-box').data())
 
-    ok _.include(keys, 'autocomplete')
-    equal typeof $('#non-autocomplete-box').data('autocomplete'), 'undefined'
-
+    ok _.include(keys, 'autocomplete'), 'hi'
+    equal typeof $('#non-autocomplete-box').data('autocomplete'), 'undefined', 'there'

@@ -1,22 +1,17 @@
 namespace :css do
-  desc "Compile css assets."
-  task :generate do
-    require 'config/initializers/plugin_symlinks'
-    require 'action_controller'
-    require 'compass-rails'
-    require 'compass/commands'
+  desc "Generate styleguide"
+  task :styleguide do
+    puts "--> creating styleguide"
+    system('bin/dress_code config/styleguide.yml')
+    raise "error running dress_code" unless $?.success?
+  end
 
-    # build the list of files ourselves so that we get it to follow symlinks
-    sass_path = File.expand_path(Compass.configuration.sass_path)
-    sass_files = Dir.glob("#{sass_path}/{,plugins/*/}**/[^_]*.s[ac]ss")
-
-    # build and execute the compass command
-    compass = Compass::Commands::UpdateProject.new(RAILS_ROOT,
-      :environment => :production,
-      :sass_files => sass_files,
-      :quiet => true,
-      :force => true)
-    compass.perform
-    raise "Error running compass\nABORTING" unless compass.successful?
+  task :compile do
+    require 'lib/brandable_css'
+    puts "--> Starting: 'compile css (including custom brands)'"
+    time = Benchmark.realtime { BrandableCSS.compile_all! }
+    BrandableCSS.save_default_json!
+    BrandableCSS.save_default_js!
+    puts "--> Finished: 'compile css (including custom brands)' in #{time}"
   end
 end

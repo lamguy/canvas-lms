@@ -16,63 +16,58 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
+require 'atom'
+
 class ExternalFeedAggregator
-  SUCCESS_WAIT_SECONDS = 1.hour     # time to refresh on a successful feed load with new entries
-  NO_ENTRIES_WAIT_SECONDS = 2.hours # time to refresh on a successful feed load with NO new entries
-  FAILURE_WAIT_SECONDS = 30.minutes # time to refresh on a failed feed load
-  
   def self.process
     ExternalFeedAggregator.new.process
   end
-  
+
   def initialize
-    @logger = RAILS_DEFAULT_LOGGER
+    @logger = Rails.logger
   end
-  
+
   def process
-    ExternalFeed.to_be_polled.each do |feed|
-      next if feed.context.root_account.deleted?
-      process_feed(feed)
-    end
-  end
-  
-  def parse_entries(feed, body)
-    if feed.feed_type == 'rss/atom'
-      begin
-        require 'rss/1.0'
-        require 'rss/2.0'
-        rss = RSS::Parser.parse(body, false)
-        raise "Invalid rss feed" unless rss
-        feed.title = rss.channel.title
-        feed.save
-        @logger.info("#{rss.items.length} rss items found")
-        entries = feed.add_rss_entries(rss)
-        @logger.info("#{entries.length} new entries added")
-        return true
-      rescue 
-        begin
-          require 'atom'
-          atom = Atom::Feed.load_feed(body)
-          feed.title = atom.title
-          feed.save
-          @logger.info("#{atom.entries.length} atom entries found")
-          entries = feed.add_atom_entries(atom)
-          @logger.info("#{entries.length} new entries added")
-          return true
-        rescue
+    Shackles.activate(:slave) do
+      start = Time.now.utc
+      loop do
+        feeds = ExternalFeed.to_be_polled(start).limit(1000).preload(context: :root_account).to_a
+        break if feeds.empty?
+
+        feeds.each do |feed|
+          Shackles.activate(:master) do
+            if !feed.context || feed.context.root_account.deleted? || feed.context.deleted?
+              feed.update_attribute(:refresh_at, success_wait_seconds.seconds.from_now)
+              next
+            end
+
+            process_feed(feed)
+          end
         end
       end
-    elsif feed.feed_type == 'ical'
-      require 'icalendar'
+    end
+  end
+
+  def parse_entries(feed, body)
+    begin
+      require 'rss/1.0'
+      require 'rss/2.0'
+      rss = RSS::Parser.parse(body, false)
+      raise "Invalid rss feed" unless rss
+      feed.title = rss.channel.title
+      feed.save
+      @logger.info("#{rss.items.length} rss items found")
+      entries = feed.add_rss_entries(rss)
+      @logger.info("#{entries.length} new entries added")
+      return true
+    rescue
       begin
-        cals = Icalendar.parse(body)
-        tally = []
-        entries = []
-        cals.each do |cal|
-          tally += feed.events
-          entries += feed.add_ical_entries(cal)
-        end
-        @logger.info("#{tally.length} ical events found")
+        require 'atom'
+        atom = Atom::Feed.load_feed(body)
+        feed.title = atom.title.to_s
+        feed.save
+        @logger.info("#{atom.entries.length} atom entries found")
+        entries = feed.add_atom_entries(atom)
         @logger.info("#{entries.length} new entries added")
         return true
       rescue
@@ -80,51 +75,41 @@ class ExternalFeedAggregator
     end
     false
   end
-  
-  def request_feed(url, attempt=0)
-    return nil if attempt > 2
-    url = URI.parse url
-    http = Net::HTTP.new(url.host, url.port)
-    request = Net::HTTP::Get.new(url.path)
-    response = http.request(request)
-    case response
-    when Net::HTTPSuccess
-      return response
-    when Net::HTTPRedirection
-      return new_response = request_feed(response['Location'], attempt + 1) || response
-    else
-      return response
-    end
-  end
 
   def process_feed(feed)
     begin
       @logger.info("feed found: #{feed.url}")
       @logger.info('requesting entries')
       require 'net/http'
-      response = request_feed(feed.url)
+
+      response = CanvasHttp.get(feed.url)
       case response
       when Net::HTTPSuccess
         success = parse_entries(feed, response.body)
         @logger.info(success ? 'successful response' : '200 with no data returned')
         feed.consecutive_failures = 0 if success
-        feed.update_attribute(:refresh_at, Time.now.utc + ((!@entries || @entries.empty?) ? NO_ENTRIES_WAIT_SECONDS : SUCCESS_WAIT_SECONDS))
+        feed.update_attribute(:refresh_at, success_wait_seconds.seconds.from_now)
       else
-        @logger.info("request failed #{response.class.to_s}")
-        feed.increment(:consecutive_failures)
-        feed.increment(:failures)
-        feed.update_attribute(:refresh_at, Time.now.utc + (FAILURE_WAIT_SECONDS))
+        @logger.info("request failed #{response.class}")
+        handle_failure(feed)
       end
-    rescue => e
-      feed.increment(:consecutive_failures)
-      feed.increment(:failures)
-      feed.update_attribute(:refresh_at, Time.now.utc + (FAILURE_WAIT_SECONDS))
-      ErrorReport.log_exception(:default, e, {
-        :message => "External Feed aggregation failed",
-        :feed_url => feed.url,
-        :feed_id => feed.id,
-        :user_id => feed.user_id,
-      })
+    rescue CanvasHttp::Error, CanvasHttp::RelativeUriError, Timeout::Error, SocketError, SystemCallError => e
+      @logger.info("request error: #{e}")
+      handle_failure(feed)
     end
+  end
+
+  def handle_failure(feed)
+    feed.increment(:failures)
+    feed.increment(:consecutive_failures)
+    feed.update_attribute(:refresh_at, failure_wait_seconds.seconds.from_now)
+  end
+
+  def success_wait_seconds
+    Setting.get('external_feed_success_wait_seconds', 2.hours.to_s).to_f
+  end
+
+  def failure_wait_seconds
+    Setting.get('external_feed_failure_wait_seconds', 30.minutes.to_s).to_f
   end
 end

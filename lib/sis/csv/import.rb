@@ -16,12 +16,14 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require 'zip/zip'
-require 'lib/sis/csv/base_importer'
+require 'action_controller_test_process'
+require 'csv'
+require 'zip'
 
 module SIS
   module CSV
     class Import
+
       attr_accessor :root_account, :batch, :errors, :warnings, :finished, :counts, :updates_every,
         :override_sis_stickiness, :add_sis_stickiness, :clear_sis_stickiness
 
@@ -32,7 +34,9 @@ module SIS
       #  * Course must be imported before Section
       #  * Course and Section must be imported before Xlist
       #  * Course, Section, and User must be imported before Enrollment
-      IMPORTERS = [:account, :term, :abstract_course, :course, :section, :xlist, :user, :enrollment, :group, :group_membership, :grade_publishing_results]
+      IMPORTERS = [:account, :term, :abstract_course, :course, :section, :xlist,
+                   :user, :user_observer, :enrollment, :group,
+                   :group_membership, :grade_publishing_results].freeze
 
       def initialize(root_account, opts = {})
         opts = opts.with_indifferent_access
@@ -56,8 +60,8 @@ module SIS
 
         @total_rows = 1
         @current_row = 0
-        @rows_since_progress_update = 0
-    
+        @current_row_for_pause_vars = 0
+
         @progress_multiplier = opts[:progress_multiplier] || 1
         @progress_offset = opts[:progress_offset] || 0
 
@@ -80,21 +84,21 @@ module SIS
         @parallel_queue = nil if @parallel_queue.blank?
         update_pause_vars
       end
-    
+
       def self.process(root_account, opts = {})
         importer = Import.new(root_account, opts)
         importer.process
         importer
       end
 
-      def process
+      def prepare
         @tmp_dirs = []
         @files.each do |file|
           if File.file?(file)
             if File.extname(file).downcase == '.zip'
               tmp_dir = Dir.mktmpdir
               @tmp_dirs << tmp_dir
-              unzip_file(file, tmp_dir)
+              CanvasUnzip::extract_archive(file, tmp_dir)
               Dir[File.join(tmp_dir, "**/**")].each do |fn|
                 process_file(tmp_dir, fn[tmp_dir.size+1 .. -1])
               end
@@ -109,18 +113,25 @@ module SIS
           @csvs[importer].reject! do |csv|
             begin
               rows = 0
-              FasterCSV.open(csv[:fullpath], "rb", BaseImporter::PARSE_ARGS) do |faster_csv|
+              ::CSV.open(csv[:fullpath], "rb", CSVBaseImporter::PARSE_ARGS) do |faster_csv|
                 rows += 1 while faster_csv.shift
               end
               @rows[importer] += rows
               @total_rows += rows
               false
-            rescue FasterCSV::MalformedCSVError
-              add_error(csv, "Malformed CSV")
+            rescue ::CSV::MalformedCSVError
+              add_error(csv, I18n.t("Malformed CSV"))
               true
             end
           end
         end
+
+        @csvs
+      end
+
+      def process
+        prepare
+
         @parallelism = 1 if @total_rows <= @minimum_rows_for_parallel
 
         # calculate how often we should update progress to get 1% resolution
@@ -166,11 +177,17 @@ module SIS
         end
       rescue => e
         if @batch
-          error_report = ErrorReport.log_exception(:sis_import, e,
-            :message => "Importing CSV for account: #{@root_account.id} (#{@root_account.name}) sis_batch_id: #{@batch.id}: #{e.to_s}",
-            :during_tests => false
-          )
-          add_error(nil, "Error while importing CSV. Please contact support. (Error report #{error_report.id})")
+          message = "Importing CSV for account"\
+            ": #{@root_account.id} (#{@root_account.name}) "\
+            "sis_batch_id: #{@batch.id}: #{e}"
+          err_id = Canvas::Errors.capture(e,{
+            type: :sis_import,
+            message: message,
+            during_tests: false
+          })[:error_report]
+          error_message = I18n.t("Error while importing CSV. Please contact support."\
+                                 " (Error report %{number})", number: err_id)
+          add_error(nil, error_message)
         else
           add_error(nil, "#{e.message}\n#{e.backtrace.join "\n"}")
           raise e
@@ -179,57 +196,71 @@ module SIS
         @tmp_dirs.each do |tmp_dir|
           FileUtils.rm_rf(tmp_dir, :secure => true) if File.directory?(tmp_dir)
         end
-      
+
         if @batch && @parallelism == 1
           @batch.data[:counts] = @counts
           @batch.processing_errors = @errors
           @batch.processing_warnings = @warnings
           @batch.save
         end
-      
+
         if @allow_printing and !@errors.empty? and !@batch
           # If there's no batch, then we must be working via the console and we should just error out
           @errors.each { |w| puts w.join ": " }
         end
       end
-    
+
       def logger
         @logger ||= Rails.logger
       end
-    
+
       def add_error(csv, message)
         @errors << [ csv ? csv[:file] : "", message ]
       end
-    
+
       def add_warning(csv, message)
         @warnings << [ csv ? csv[:file] : "", message ]
       end
-    
-      def update_progress(count = 1)
-        @current_row += count
+
+      def calculate_progress
+        (((@current_row.to_f/@total_rows) * @progress_multiplier) + @progress_offset) * 100
+      end
+
+      def update_progress
+        @current_row += 1
+        @current_row_for_pause_vars += 1
         return unless @batch
 
-        @rows_since_progress_update += count
-        if @rows_since_progress_update >= @updates_every
+        if update_progress?
           if @parallelism > 1
-            SisBatch.transaction do
-              @batch.reload(:select => 'data, progress', :lock => true)
-              @current_row += @batch.data[:current_row]
-              @batch.data[:current_row] = @current_row
-              @batch.progress = (((@current_row.to_f/@total_rows) * @progress_multiplier) + @progress_offset) * 100
-              @batch.save
-              @current_row = 0
-              @rows_since_progress_update = 0
+            begin
+              SisBatch.transaction do
+                @batch.reload(select: 'data, progress', lock: :no_key_update)
+                @current_row += @batch.data[:current_row]
+                @batch.data[:current_row] = @current_row
+                @batch.progress = [calculate_progress, 99].min
+                @batch.save
+                @current_row = 0
+              end
+            rescue ActiveRecord::RecordNotFound
+              return
             end
           else
             @batch.fast_update_progress( (((@current_row.to_f/@total_rows) * @progress_multiplier) + @progress_offset) * 100)
           end
+          @last_progress_update = Time.now
         end
 
-        if @current_row.to_i % @pause_every == 0
+        if @current_row_for_pause_vars % @pause_every == 0
           sleep(@pause_duration)
           update_pause_vars
         end
+      end
+
+      def update_progress?
+        @last_progress_update ||= Time.now
+        update_interval = Setting.get('sis_batch_progress_interval', 2.seconds).to_i
+        @last_progress_update < update_interval.seconds.ago
       end
 
       def run_single_importer(importer, csv)
@@ -242,11 +273,16 @@ module SIS
           importerObject.process(csv)
           run_next_importer(IMPORTERS[IMPORTERS.index(importer) + 1]) if complete_importer(importer)
         rescue => e
-          error_report = ErrorReport.log_exception(:sis_import, e,
-            :message => "Importing CSV for account: #{@root_account.id} (#{@root_account.name}) sis_batch_id: #{@batch.id}: #{e.to_s}",
-            :during_tests => false
-          )
-          add_error(nil, "Error while importing CSV. Please contact support. (Error report #{error_report.id})")
+          message = "Importing CSV for account: "\
+            "#{@root_account.id} (#{@root_account.name}) sis_batch_id: #{@batch.id}: #{e}"
+          err_id = Canvas::Errors.capture(e, {
+            type: :sis_import,
+            message: message,
+            during_tests: false
+          })[:error_report]
+          error_message = I18n.t("Error while importing CSV. Please contact support. "\
+                                 "(Error report %{number})", number: err_id)
+          add_error(nil, error_message)
           @batch.processing_errors ||= []
           @batch.processing_warnings ||= []
           @batch.processing_errors.concat(@errors)
@@ -257,7 +293,7 @@ module SIS
           file.close if file
         end
       end
-    
+
       private
 
       def run_next_importer(importer)
@@ -313,16 +349,6 @@ module SIS
         @pause_every = (@batch.data[:pause_every] || Setting.get('sis_batch_pause_every', 100)).to_i
         @pause_duration = (@batch.data[:pause_duration] || Setting.get('sis_batch_pause_duration', 0)).to_f
       end
-    
-      def unzip_file(file, dest)
-        Zip::ZipFile.open(file) do |zip_file|
-          zip_file.each do |f|
-            f_path = File.join(dest, f.name)
-            FileUtils.mkdir_p(File.dirname(f_path))
-            zip_file.extract(f, f_path) unless File.exist?(f_path)
-          end
-        end
-      end
 
       def rebalance_csvs(importer)
         rows_per_batch = (@rows[importer].to_f / @parallelism).ceil.to_i
@@ -334,10 +360,10 @@ module SIS
         headers = @headers[importer].to_a
         path = nil
         begin
-          Attachment.skip_scribd_submits
+          Attachment.skip_3rd_party_submits
           @csvs[importer].each do |csv|
             remaining_in_batch = 0
-            FasterCSV.foreach(csv[:fullpath], BaseImporter::PARSE_ARGS) do |row|
+            ::CSV.foreach(csv[:fullpath], CSVBaseImporter::PARSE_ARGS) do |row|
               if remaining_in_batch == 0
                 temp_file += 1
                 if out_csv
@@ -345,18 +371,18 @@ module SIS
                   out_csv = nil
                   att = Attachment.new
                   att.context = @batch
-                  att.uploaded_data = ActionController::TestUploadedFile.new(path, Attachment.mimetype(path))
+                  att.uploaded_data = Rack::Test::UploadedFile.new(path, Attachment.mimetype(path))
                   att.display_name = new_csvs.last[:file]
                   att.save!
                   new_csvs.last.delete(:fullpath)
                   new_csvs.last[:attachment] = att
                 end
                 path = File.join(tmp_dir, "#{importer}#{temp_file}.csv")
-                out_csv = FasterCSV.open(path, "wb", {:headers => headers, :write_headers => true})
+                out_csv = ::CSV.open(path, "wb", {:headers => headers, :write_headers => true})
                 new_csvs << {:file => csv[:file]}
                 remaining_in_batch = rows_per_batch
               end
-              out_row = FasterCSV::Row.new(headers, []);
+              out_row = ::CSV::Row.new(headers, []);
               headers.each { |header| out_row[header] = row[header] }
               out_csv << out_row
               remaining_in_batch -= 1
@@ -367,7 +393,7 @@ module SIS
             out_csv = nil
             att = Attachment.new
             att.context = @batch
-            att.uploaded_data = ActionController::TestUploadedFile.new(path, Attachment.mimetype(path))
+            att.uploaded_data = Rack::Test::UploadedFile.new(path, Attachment.mimetype(path))
             att.display_name = new_csvs.last[:file]
             att.save!
             new_csvs.last.delete(:fullpath)
@@ -375,51 +401,71 @@ module SIS
           end
         ensure
           out_csv.close if out_csv
-          Attachment.skip_scribd_submits(false)
+          Attachment.skip_3rd_party_submits(false)
         end
         @csvs[importer] = new_csvs
       end
-    
+
       def process_file(base, file)
         csv = { :base => base, :file => file, :fullpath => File.join(base, file) }
         if File.file?(csv[:fullpath]) && File.extname(csv[:fullpath]).downcase == '.csv'
-          # validate UTF-8
-          begin
-            Iconv.open('UTF-8', 'UTF-8') do |iconv|
-              File.open(csv[:fullpath]) do |file|
-                chunk = file.read(4096)
-                while chunk
-                  iconv.iconv(chunk)
-                  chunk = file.read(4096)
-                end
-                iconv.iconv(nil)
-              end
-            end
-          rescue Iconv::Failure
-            add_error(csv, "Invalid UTF-8")
+          unless valid_utf8?(csv[:fullpath])
+            add_error(csv, I18n.t("Invalid UTF-8"))
             return
           end
           begin
-            FasterCSV.foreach(csv[:fullpath], BaseImporter::PARSE_ARGS.merge(:headers => false)) do |row|
+            ::CSV.foreach(csv[:fullpath], CSVBaseImporter::PARSE_ARGS.merge(:headers => false)) do |row|
               row.each(&:downcase!)
-              importer = IMPORTERS.index do |importer|
-                if SIS::CSV.const_get(importer.to_s.camelcase + 'Importer').send('is_' + importer.to_s + '_csv?', row)
-                  @csvs[importer] << csv
-                  @headers[importer].merge(row)
+              importer = IMPORTERS.index do |type|
+                if SIS::CSV.const_get(type.to_s.camelcase + 'Importer').send(type.to_s + '_csv?', row)
+                  @csvs[type] << csv
+                  @headers[type].merge(row)
                   true
                 else
                   false
                 end
               end
-              add_error(csv, "Couldn't find Canvas CSV import headers") if importer.nil?
+              add_error(csv, I18n.t("Couldn't find Canvas CSV import headers")) if importer.nil?
               break
             end
-          rescue FasterCSV::MalformedCSVError
+          rescue ::CSV::MalformedCSVError
             add_error(csv, "Malformed CSV")
           end
         elsif !File.directory?(csv[:fullpath]) && !(csv[:fullpath] =~ IGNORE_FILES)
-          add_warning(csv, "Skipping unknown file type")
+          add_warning(csv, I18n.t("Skipping unknown file type"))
         end
+      end
+
+      def valid_utf8?(path)
+        # validate UTF-8
+        Iconv.open('UTF-8', 'UTF-8') do |iconv|
+          File.open(path) do |file|
+            chunk = file.read(4096)
+            error_count = 0
+
+            while chunk
+              begin
+                iconv.iconv(chunk)
+              rescue Iconv::Failure
+                error_count += 1
+                if !file.eof? && error_count <= 4
+                  # we may have split a utf-8 character in the chunk - try to resolve it, but only to a point
+                  chunk << file.read(1)
+                  next
+                else
+                  raise
+                end
+              end
+
+              error_count = 0
+              chunk = file.read(4096)
+            end
+            iconv.iconv(nil)
+          end
+        end
+        true
+      rescue Iconv::Failure
+        false
       end
     end
   end

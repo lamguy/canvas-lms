@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2011 Instructure, Inc.
+# Copyright (C) 2011 - 2014 Instructure, Inc.
 #
 # This file is part of Canvas.
 #
@@ -19,7 +19,7 @@
 require File.expand_path(File.dirname(__FILE__) + '/../spec_helper.rb')
 
 describe CourseSection, "moving to new course" do
-  
+
   it "should transfer enrollments to the new root account" do
     account1 = Account.create!(:name => "1")
     account2 = Account.create!(:name => "2")
@@ -33,60 +33,67 @@ describe CourseSection, "moving to new course" do
     e.workflow_state = 'active'
     e.save!
     course1.reload
-    
-    course1.course_sections.find_by_id(cs.id).should_not be_nil
-    course2.course_sections.find_by_id(cs.id).should be_nil
-    course3.course_sections.find_by_id(cs.id).should be_nil
-    e.root_account.should eql(account1)
-    e.course.should eql(course1)
-    
+
+    expect(course1.course_sections.where(id: cs).first).not_to be_nil
+    expect(course2.course_sections.where(id: cs).first).to be_nil
+    expect(course3.course_sections.where(id: cs).first).to be_nil
+    expect(e.root_account).to eql(account1)
+    expect(e.course).to eql(course1)
+
     cs.move_to_course(course2)
     course1.reload
     course2.reload
     cs.reload
     e.reload
-    
-    course1.course_sections.find_by_id(cs.id).should be_nil
-    course2.course_sections.find_by_id(cs.id).should_not be_nil
-    course3.course_sections.find_by_id(cs.id).should be_nil
-    e.root_account.should eql(account2)
-    e.course.should eql(course2)
-    
+
+    expect(course1.course_sections.where(id: cs).first).to be_nil
+    expect(course2.course_sections.where(id: cs).first).not_to be_nil
+    expect(course3.course_sections.where(id: cs).first).to be_nil
+    expect(e.root_account).to eql(account2)
+    expect(e.course).to eql(course2)
+
     cs.move_to_course(course3)
     course1.reload
     course2.reload
     cs.reload
     e.reload
-    
-    course1.course_sections.find_by_id(cs.id).should be_nil
-    course2.course_sections.find_by_id(cs.id).should be_nil
-    course3.course_sections.find_by_id(cs.id).should_not be_nil
-    e.root_account.should eql(account2)
-    e.course.should eql(course3)
-    
-    cs.move_to_course(course1)
-    course1.reload
-    course2.reload
-    cs.reload
-    e.reload
-    
-    course1.course_sections.find_by_id(cs.id).should_not be_nil
-    course2.course_sections.find_by_id(cs.id).should be_nil
-    course3.course_sections.find_by_id(cs.id).should be_nil
-    e.root_account.should eql(account1)
-    e.course.should eql(course1)
+
+    expect(course1.course_sections.where(id: cs).first).to be_nil
+    expect(course2.course_sections.where(id: cs).first).to be_nil
+    expect(course3.course_sections.where(id: cs).first).not_to be_nil
+    expect(e.root_account).to eql(account2)
+    expect(e.course).to eql(course3)
 
     cs.move_to_course(course1)
     course1.reload
     course2.reload
     cs.reload
     e.reload
-    
-    course1.course_sections.find_by_id(cs.id).should_not be_nil
-    course2.course_sections.find_by_id(cs.id).should be_nil
-    course3.course_sections.find_by_id(cs.id).should be_nil
-    e.root_account.should eql(account1)
-    e.course.should eql(course1)
+
+    expect(course1.course_sections.where(id: cs).first).not_to be_nil
+    expect(course2.course_sections.where(id: cs).first).to be_nil
+    expect(course3.course_sections.where(id: cs).first).to be_nil
+    expect(e.root_account).to eql(account1)
+    expect(e.course).to eql(course1)
+
+    cs.move_to_course(course1)
+    course1.reload
+    course2.reload
+    cs.reload
+    e.reload
+
+    expect(course1.course_sections.where(id: cs).first).not_to be_nil
+    expect(course2.course_sections.where(id: cs).first).to be_nil
+    expect(course3.course_sections.where(id: cs).first).to be_nil
+    expect(e.root_account).to eql(account1)
+    expect(e.course).to eql(course1)
+  end
+
+  it "should associate a section with the course's account" do
+    account = Account.default.manually_created_courses_account
+    course = account.courses.create!
+    section = course.default_section
+    expect(section.course_account_associations.map(&:account_id).sort).to eq [Account.default.id, account.id].sort
   end
 
   it "should update user account associations for xlist between subaccounts" do
@@ -98,42 +105,42 @@ describe CourseSection, "moving to new course" do
     course2 = sub_account2.courses.create!(:name => "course2")
     course3 = sub_account3.courses.create!(:name => "course3")
     cs = course1.course_sections.create!
-    cs.nonxlist_course_id.should be_nil
+    expect(cs.nonxlist_course_id).to be_nil
     u = User.create!
     u.register!
     e = course1.enroll_user(u, 'StudentEnrollment', :section => cs)
     u.update_account_associations
 
-    course1.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account1.id].sort
-    course2.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account2.id].sort
-    course3.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account3.id].sort
+    expect(course1.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account1.id].sort
+    expect(course2.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account2.id].sort
+    expect(course3.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account3.id].sort
     u.reload
-    u.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account1.id].sort
+    expect(u.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account1.id].sort
 
     cs.crosslist_to_course(course2)
-    course1.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account1.id].sort
-    course2.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account1.id, sub_account2.id].sort
-    course3.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account3.id].sort
+    expect(course1.reload.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account1.id].sort
+    expect(course2.reload.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account1.id, sub_account2.id].sort
+    expect(course3.reload.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account3.id].sort
     u.reload
-    u.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account1.id, sub_account2.id].sort
+    expect(u.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account1.id, sub_account2.id].sort
 
     cs.crosslist_to_course(course3)
-    cs.nonxlist_course_id.should == course1.id
-    course1.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account1.id].sort
-    course2.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account2.id].sort
-    course3.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account1.id, sub_account3.id].sort
+    expect(cs.nonxlist_course_id).to eq course1.id
+    expect(course1.reload.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account1.id].sort
+    expect(course2.reload.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account2.id].sort
+    expect(course3.reload.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account1.id, sub_account3.id].sort
     u.reload
-    u.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account1.id, sub_account3.id].sort
+    expect(u.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account1.id, sub_account3.id].sort
 
     cs.uncrosslist
-    cs.nonxlist_course_id.should be_nil
-    course1.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account1.id].sort
-    course2.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account2.id].sort
-    course3.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account3.id].sort
+    expect(cs.nonxlist_course_id).to be_nil
+    expect(course1.reload.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account1.id].sort
+    expect(course2.reload.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account2.id].sort
+    expect(course3.reload.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account3.id].sort
     u.reload
-    u.associated_accounts.map(&:id).sort.should == [root_account.id, sub_account1.id]
+    expect(u.associated_accounts.map(&:id).sort).to eq [root_account.id, sub_account1.id]
   end
-  
+
   it "should crosslist and uncrosslist" do
     account1 = Account.create!(:name => "1")
     account2 = Account.create!(:name => "2")
@@ -152,98 +159,264 @@ describe CourseSection, "moving to new course" do
     e = course1.enroll_user(u, 'StudentEnrollment', :section => cs)
     e.workflow_state = 'active'
     e.save!
+    #should also move deleted enrollments
+    e.destroy
     course1.reload
     course2.reload
     course3.workflow_state = 'active'
     course3.save
     e.reload
-    
-    course1.course_sections.find_by_id(cs.id).should_not be_nil
-    course2.course_sections.find_by_id(cs.id).should be_nil
-    course3.course_sections.find_by_id(cs.id).should be_nil
-    cs.account.should be_nil
-    cs.nonxlist_course.should be_nil
-    e.root_account.should eql(account1)
-    cs.crosslisted?.should be_false
-    course1.workflow_state.should == 'created'
-    course2.workflow_state.should == 'created'
-    course3.workflow_state.should == 'created'
-    
+
+    expect(course1.course_sections.where(id: cs).first).not_to be_nil
+    expect(course2.course_sections.where(id: cs).first).to be_nil
+    expect(course3.course_sections.where(id: cs).first).to be_nil
+    expect(cs.nonxlist_course).to be_nil
+    expect(e.root_account).to eql(account1)
+    expect(cs.crosslisted?).to be_falsey
+    expect(course1.workflow_state).to eq 'created'
+    expect(course2.workflow_state).to eq 'created'
+    expect(course3.workflow_state).to eq 'created'
+
     cs.crosslist_to_course(course2)
     course1.reload
     course2.reload
     cs.reload
     e.reload
-    
-    course1.course_sections.find_by_id(cs.id).should be_nil
-    course2.course_sections.find_by_id(cs.id).should_not be_nil
-    course3.course_sections.find_by_id(cs.id).should be_nil
-    cs.account.should be_nil
-    cs.nonxlist_course.should eql(course1)
-    e.root_account.should eql(account2)
-    cs.crosslisted?.should be_true
-    course1.workflow_state.should == 'created'
-    course2.workflow_state.should == 'created'
-    course3.workflow_state.should == 'created'
-      
+
+    expect(course1.course_sections.where(id: cs).first).to be_nil
+    expect(course2.course_sections.where(id: cs).first).not_to be_nil
+    expect(course3.course_sections.where(id: cs).first).to be_nil
+    expect(cs.nonxlist_course).to eql(course1)
+    expect(e.root_account).to eql(account2)
+    expect(cs.crosslisted?).to be_truthy
+    expect(course1.workflow_state).to eq 'created'
+    expect(course2.workflow_state).to eq 'created'
+    expect(course3.workflow_state).to eq 'created'
+
     cs.crosslist_to_course(course3)
     course1.reload
     course2.reload
     course3.reload
     cs.reload
     e.reload
-    
-    course1.course_sections.find_by_id(cs.id).should be_nil
-    course2.course_sections.find_by_id(cs.id).should be_nil
-    course3.course_sections.find_by_id(cs.id).should_not be_nil
-    cs.account.should be_nil
-    cs.nonxlist_course.should eql(course1)
-    e.root_account.should eql(account3)
-    cs.crosslisted?.should be_true
-    course1.workflow_state.should == 'created'
-    course2.workflow_state.should == 'created'
-    course3.workflow_state.should == 'created'
-      
+
+    expect(course1.course_sections.where(id: cs).first).to be_nil
+    expect(course2.course_sections.where(id: cs).first).to be_nil
+    expect(course3.course_sections.where(id: cs).first).not_to be_nil
+    expect(cs.nonxlist_course).to eql(course1)
+    expect(e.root_account).to eql(account3)
+    expect(cs.crosslisted?).to be_truthy
+    expect(course1.workflow_state).to eq 'created'
+    expect(course2.workflow_state).to eq 'created'
+    expect(course3.workflow_state).to eq 'created'
+
     cs.uncrosslist
     course1.reload
     course2.reload
     course3.reload
     cs.reload
     e.reload
-    
-    course1.course_sections.find_by_id(cs.id).should_not be_nil
-    course2.course_sections.find_by_id(cs.id).should be_nil
-    course3.course_sections.find_by_id(cs.id).should be_nil
-    cs.account.should be_nil
-    cs.nonxlist_course.should be_nil
-    e.root_account.should eql(account1)
-    cs.crosslisted?.should be_false
-    course1.workflow_state.should == 'created'
-    course2.workflow_state.should == 'created'
-    course3.workflow_state.should == 'created'
+
+    expect(course1.course_sections.where(id: cs).first).not_to be_nil
+    expect(course2.course_sections.where(id: cs).first).to be_nil
+    expect(course3.course_sections.where(id: cs).first).to be_nil
+    expect(cs.nonxlist_course).to be_nil
+    expect(e.root_account).to eql(account1)
+    expect(cs.crosslisted?).to be_falsey
+    expect(course1.workflow_state).to eq 'created'
+    expect(course2.workflow_state).to eq 'created'
+    expect(course3.workflow_state).to eq 'created'
   end
-  
+
+  describe '#delete_enrollments_if_deleted' do
+    let(:account) { Account.create!(name: '1') }
+    let(:course) { account.courses.create! }
+    let(:section) { course.course_sections.create!(workflow_state: 'active') }
+
+    before do
+      student_in_section(section)
+    end
+
+    it "must not have any effect when the section's workflow_state is not 'deleted'" do
+      section.delete_enrollments_if_deleted
+      enrollment_states = section.enrollments.pluck(:workflow_state)
+      expect(enrollment_states).to_not include 'deleted'
+    end
+
+    it "must mark the enrollments as deleted if the section's workflow_state is 'deleted'" do
+      section.workflow_state = 'deleted'
+      section.delete_enrollments_if_deleted
+      enrollment_states = Enrollment.where(course_section_id: section.id).pluck(:workflow_state)
+      expect(enrollment_states.uniq).to contain_exactly 'deleted'
+    end
+  end
+
   it 'should update course account associations on save' do
     account1 = Account.create!(:name => "1")
-    account2 = Account.create!(:name => "2")
+    account2 = account1.sub_accounts.create!(:name => "2")
     course1 = account1.courses.create!
     course2 = account2.courses.create!
     cs1 = course1.course_sections.create!
-    CourseAccountAssociation.find_all_by_course_id(course1.id).map(&:account_id).uniq.should == [account1.id]
-    CourseAccountAssociation.find_all_by_course_id(course2.id).map(&:account_id).uniq.should == [account2.id]
-    cs1.account = account2
-    cs1.course.course_sections.reset
-    cs1.save
-    CourseAccountAssociation.find_all_by_course_id(course1.id).map(&:account_id).uniq.sort.should == [account1.id, account2.id].sort
-    CourseAccountAssociation.find_all_by_course_id(course2.id).map(&:account_id).uniq.should == [account2.id]
-    cs1.account = nil
-    cs1.course.course_sections.reset
-    cs1.save
-    CourseAccountAssociation.find_all_by_course_id(course1.id).map(&:account_id).uniq.should == [account1.id]
-    CourseAccountAssociation.find_all_by_course_id(course2.id).map(&:account_id).uniq.should == [account2.id]
+    expect(CourseAccountAssociation.where(course_id: course1).distinct.order(:account_id).pluck(:account_id)).to eq [account1.id]
+    expect(CourseAccountAssociation.where(course_id: course2).distinct.order(:account_id).pluck(:account_id)).to eq [account1.id, account2.id]
+    course1.account = account2
+    course1.save
+    expect(CourseAccountAssociation.where(course_id: course1).distinct.order(:account_id).pluck(:account_id)).to eq [account1.id, account2.id].sort
+    expect(CourseAccountAssociation.where(course_id: course2).distinct.order(:account_id).pluck(:account_id)).to eq [account1.id, account2.id]
+    course1.account = nil
+    course1.save
+    expect(CourseAccountAssociation.where(course_id: course1).distinct.order(:account_id).pluck(:account_id)).to eq [account1.id]
+    expect(CourseAccountAssociation.where(course_id: course2).distinct.order(:account_id).pluck(:account_id)).to eq [account1.id, account2.id]
     cs1.crosslist_to_course(course2)
-    CourseAccountAssociation.find_all_by_course_id(course1.id).map(&:account_id).uniq.should == [account1.id]
-    CourseAccountAssociation.find_all_by_course_id(course2.id).map(&:account_id).uniq.sort.should == [account1.id, account2.id].sort
+    expect(CourseAccountAssociation.where(course_id: course1).distinct.order(:account_id).pluck(:account_id)).to eq [account1.id]
+    expect(CourseAccountAssociation.where(course_id: course2).distinct.order(:account_id).pluck(:account_id)).to eq [account1.id, account2.id].sort
   end
 
+  describe 'validation' do
+    before :once do
+      course = Course.create_unique
+      @section = CourseSection.create(course: course)
+      @long_string = 'qwertyuiopasdfghjklzxcvbnmqwertyuiopasdfghjklzxcvbnmqwertyuiopasdfghjklzxcvbnmqwertyuiopasdfghjklzxcvbnmqwertyuiopasdfghjklzxcvbnmqwertyuiopasdfghjklzxcvbnmqwertyuiopasdfghjklzxcvbnmqwertyuiopasdfghjklzxcvbnmqwertyuiopasdfghjklzxcvbnmqwertyuiopasdfghjklzxcvbnm'
+    end
+
+    it "should validate the length of attributes" do
+      @section.name = @long_string
+      @section.sis_source_id = @long_string
+      expect(lambda {@section.save!}).to raise_error("Validation failed: Sis source is too long (maximum is 255 characters), Name is too long (maximum is 255 characters)")
+    end
+
+    it "should validate the length of sis_source_id" do
+      @section.sis_source_id = @long_string
+      expect(lambda {@section.save!}).to raise_error("Validation failed: Sis source is too long (maximum is 255 characters)")
+    end
+
+    it "should validate the length of section name" do
+      @section.name = @long_string
+      expect(lambda {@section.save!}).to raise_error("Validation failed: Name is too long (maximum is 255 characters)")
+    end
+  end
+
+  describe 'dependent destroys' do
+    before :once do
+      course_with_teacher
+      @course.assignments.build
+      @assignment = @course.assignments.build("title"=>"test")
+      @assignment.save!
+      @section = @course.course_sections.create!
+    end
+
+    it 'should soft destroy overrides when destroyed' do
+      @override = @assignment.assignment_overrides.build
+      @override.set = @section
+      @override.save!
+      expect(@override.workflow_state).to eq("active")
+      @section.destroy
+      @override.reload
+      expect(@override.workflow_state).to eq("deleted")
+    end
+
+    it 'should soft destroy enrollments when destroyed' do
+      @enrollment = @course.enroll_student(User.create, {section: @section})
+      expect(@enrollment.workflow_state).to eq("creation_pending")
+      @section.destroy
+      @enrollment.reload
+      expect(@enrollment.workflow_state).to eq("deleted")
+    end
+  end
+
+  describe 'deletable?' do
+    before :once do
+      course_with_teacher
+      @section = @course.course_sections.create!
+    end
+
+    it 'should be deletable if empty' do
+      expect(@section).to be_deletable
+    end
+
+    it 'should not be deletable if it has real enrollments' do
+      student_in_course :section => @section
+      expect(@section).not_to be_deletable
+    end
+
+    it 'should be deletable if it only has a student view enrollment' do
+      @course.student_view_student
+      expect(@section.enrollments.map(&:type)).to eql ['StudentViewEnrollment']
+      expect(@section).to be_deletable
+    end
+
+    it 'should be deletable if it only has rejected enrollments' do
+      student_in_course :section => @section
+      @section.enrollments.first.update_attribute(:workflow_state, "rejected")
+      expect(@section).to be_deletable
+    end
+  end
+
+  context 'permissions' do
+    context ':read and section_visibilities' do
+      before :once do
+        RoleOverride.create!({
+          :context => Account.default,
+          :permission => 'manage_students',
+          :role => ta_role,
+          :enabled => false
+        })
+        course_with_ta(:active_all => true)
+        @other_section = @course.course_sections.create!(:name => "Other Section")
+      end
+
+      it "should work with section_limited true" do
+        @ta.enrollments.update_all(:limit_privileges_to_course_section => true)
+        @ta.reload
+
+        # make sure other ways to get :read are false
+        expect(@other_section.course.grants_right?(@ta, :manage_sections)).to be_falsey
+        expect(@other_section.course.grants_right?(@ta, :manage_students)).to be_falsey
+
+        expect(@other_section.grants_right?(@ta, :read)).to be_falsey
+      end
+
+      it "should work with section_limited false" do
+        # make sure other ways to get :read are false
+        expect(@other_section.course.grants_right?(@ta, :manage_sections)).to be_falsey
+        expect(@other_section.course.grants_right?(@ta, :manage_students)).to be_falsey
+
+        expect(@other_section.grants_right?(@ta, :read)).to be_truthy
+      end
+    end
+  end
+
+  context 'enrollment state invalidation' do
+    before :once do
+      course_factory(active_all: true)
+      @section = @course.course_sections.create!
+      @enrollment = @course.enroll_student(user_factory(:active_all => true), :section => @section)
+    end
+
+    it "should not invalidate unless something date-related changes" do
+      EnrollmentState.expects(:update_enrollment).never
+      @section.name = "durp"
+      @section.save!
+    end
+
+    it "should not invalidate if dates change if it isn't restricted to dates yet" do
+      EnrollmentState.expects(:update_enrollment).never
+      @section.start_at = 1.day.from_now
+      @section.save!
+    end
+
+    it "should invalidate if dates change and section is restricted to dates" do
+      @section.restrict_enrollments_to_section_dates = true
+      @section.save!
+      EnrollmentState.expects(:update_enrollment).with(@enrollment).once
+      @section.start_at = 1.day.from_now
+      @section.save!
+    end
+
+    it "should invalidate if course" do
+      other_course = course_factory(active_all: true)
+      EnrollmentState.expects(:update_enrollment).with(@enrollment).once
+      @section.crosslist_to_course(other_course)
+    end
+  end
 end

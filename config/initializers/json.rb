@@ -1,37 +1,20 @@
-# JSON::Ext overwrites Rails' implemenation of these.
-# And does dumb stuff instantiating a state object and temp buffer and crap
-# which is really slow if you have 50,000 nil values.
-# Just return teh constant values.
-class NilClass
-  def to_json(*args)
-    'null'
-  end
-end
 
-class FalseClass
-  def to_json(*args)
-    'false'
-  end
-end
+require 'json/jwt'
+require 'oj_mimic_json' # have to load after json/jwt or else the oj_mimic_json will make it never load
+Oj.default_options = { escape_mode: :xss_safe, bigdecimal_as_decimal: true }
 
-class TrueClass
-  def to_json(*args)
-    'true'
-  end
-end
+ActiveSupport::JSON::Encoding.time_precision = 0
 
-# This changes a "perfect" reference check for a fast one.  If you see this
-# exception, you can comment this out, and then the actual rails code will
-# raise a similar exception on the very first duplicate object, to help you
-# pinpoint the problem.
-ActiveSupport::JSON::Encoding.module_eval do
-  def self.encode(value, options = nil)
-    options = {} unless Hash === options
-    depth = (options[:recursion_depth] ||= 1)
-    raise CircularReferenceError, 'something references itself (probably)' if depth > 1000
-    options[:recursion_depth] = depth + 1
-    value.to_json(options)
-  ensure
-    options[:recursion_depth] = depth
+unless CANVAS_RAILS4_2
+  class BigDecimal
+    remove_method :as_json
+
+    def as_json(options = nil) #:nodoc:
+      if finite?
+        CanvasRails::Application.instance.config.active_support.encode_big_decimal_as_string ? to_s : self
+      else
+        nil
+      end
+    end
   end
 end

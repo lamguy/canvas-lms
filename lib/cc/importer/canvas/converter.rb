@@ -24,7 +24,7 @@ module CC::Importer::Canvas
     include TopicConverter
     include WebcontentConverter
     include QuizConverter
-    include CC::Importer::BLTIConverter
+    include MediaTrackConverter
 
     MANIFEST_FILE = "imsmanifest.xml"
 
@@ -32,6 +32,9 @@ module CC::Importer::Canvas
     def initialize(settings)
       super(settings, "cc")
       @course = @course.with_indifferent_access
+      @resources = {}
+      @resource_nodes_for_flat_manifest = {}
+      @canvas_converter = true
     end
 
     # exports the package into the intermediary json
@@ -39,25 +42,36 @@ module CC::Importer::Canvas
       to_export = SCRAPE_ALL_HASH.merge to_export if to_export
       unzip_archive
       set_progress(5)
-      
+
       @manifest = open_file(File.join(@unzipped_file_path, MANIFEST_FILE))
+      get_all_resources(@manifest)
+
       convert_all_course_settings
       set_progress(10)
       @course[:wikis] = convert_wikis
       set_progress(20)
-      @course[:assignments] = convert_assignments
+      @course[:assignments] = convert_canvas_assignments
       set_progress(30)
-      @course[:discussion_topics] = convert_topics
+      @course[:discussion_topics], @course[:announcements]  = convert_topics_and_announcements
       set_progress(40)
-      @course[:external_tools] = convert_blti_links
+      lti = CC::Importer::BLTIConverter.new
+      res = lti.get_blti_resources(@manifest)
+      @course[:external_tools] = lti.convert_blti_links(res, self)
       set_progress(50)
       @course[:file_map] = create_file_map
       set_progress(60)
-      package_course_files
+      @course[:all_files_zip] = package_course_files
       set_progress(70)
+      @course[:media_tracks] = convert_media_tracks(settings_doc(MEDIA_TRACKS))
+      set_progress(71)
       convert_quizzes if Qti.qti_enabled?
       set_progress(80)
-      
+
+      read_external_content
+
+      # for master course sync
+      @course[:deletions] = @settings[:deletions] if @settings[:deletions].present?
+
       #close up shop
       save_to_file
       set_progress(90)
@@ -65,5 +79,25 @@ module CC::Importer::Canvas
       @course
     end
 
+    def read_external_content
+      folder = File.join(@unzipped_file_path, EXTERNAL_CONTENT_FOLDER)
+      return unless File.directory?(folder)
+
+      external_content = {}
+      Dir["#{folder}/**/**"].each do |path|
+        next if File.directory?(path)
+
+        service_key = File.basename(path, '.json')
+        json = File.read(path)
+        begin
+          data = JSON.parse(json)
+          external_content[service_key] = data
+        rescue JSON::ParserError => e
+          Canvas::Errors.capture_exception(:external_content_migration, e)
+        end
+      end
+      @course[:external_content] = external_content
+    end
   end
 end
+SafeYAML.whitelist_class!(CC::Importer::Canvas::Converter)

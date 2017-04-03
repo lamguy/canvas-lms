@@ -19,23 +19,26 @@ define([
   'i18n!course_settings',
   'jquery' /* $ */,
   'underscore',
+  'course_settings_helper' /* tabIdFromElement */,
+  'timezone',
+  'jsx/shared/helpers/forceScreenreaderToReparse',
   'jquery.ajaxJSON' /* ajaxJSON */,
-  'jquery.instructure_date_and_time' /* parseFromISO, date_field */,
+  'jquery.instructure_date_and_time' /* datetimeString, date_field */,
   'jquery.instructure_forms' /* formSubmit, fillFormData, getFormData, formErrors */,
   'jqueryui/dialog',
-  'jquery.instructure_misc_helpers' /* scrollSidebar */,
+  'compiled/jquery/fixDialogButtons' /* fix dialog formatting */,
   'jquery.instructure_misc_plugins' /* confirmDelete, fragmentChange, showIf */,
   'jquery.keycodes' /* keycodes */,
   'jquery.loadingImg' /* loadingImage */,
   'compiled/jquery.rails_flash_notifications',
   'jquery.templateData' /* fillTemplateData, getTemplateData */,
-  'link_enrollment' /* link_enrollment */,
+  'link_enrollment' /* global link_enrollment */,
   'vendor/jquery.ba-tinypubsub' /* /\.publish/ */,
   'vendor/jquery.scrollTo' /* /\.scrollTo/ */,
   'jqueryui/autocomplete' /* /\.autocomplete/ */,
   'jqueryui/sortable' /* /\.sortable/ */,
   'jqueryui/tabs' /* /\.tabs/ */
-], function(I18n, $, _) {
+], function(I18n, $, _, CourseSettingsHelper, tz, forceScreenReaderToReparse) {
 
   var GradePublishing = {
     status: null,
@@ -51,25 +54,25 @@ define([
           $publish_grades_error = $("#publish_grades_error");
       if (GradePublishing.status == 'published') {
         $publish_grades_error.hide();
-        $publish_grades_link.html(I18n.t('links.republish', "Republish grades to SIS"));
+        $publish_grades_link.text(I18n.t('links.republish', "Republish grades to SIS"));
         $publish_grades_link.removeClass("disabled");
       } else if (GradePublishing.status == 'publishing' || GradePublishing.status == 'pending') {
         $publish_grades_error.hide();
-        $publish_grades_link.html(I18n.t('links.publishing', "Publishing grades to SIS..."));
+        $publish_grades_link.text(I18n.t('links.publishing', "Publishing grades to SIS..."));
         if (!requestInProgress) {
           setTimeout(GradePublishing.checkup, 5000);
         }
         $publish_grades_link.addClass("disabled");
       } else if (GradePublishing.status == 'unpublished') {
         $publish_grades_error.hide();
-        $publish_grades_link.html(I18n.t('links.publish', "Publish grades to SIS"));
+        $publish_grades_link.text(I18n.t('links.publish', "Publish grades to SIS"));
         $publish_grades_link.removeClass("disabled");
       } else {
         $publish_grades_error.show();
-        $publish_grades_link.html(I18n.t('links.republish', "Republish grades to SIS"));
+        $publish_grades_link.text(I18n.t('links.republish', "Republish grades to SIS"));
         $publish_grades_link.removeClass("disabled");
       }
-      $messages = $("#publish_grades_messages");
+      var $messages = $("#publish_grades_messages");
       $messages.empty();
       $.each(messages, function(message, users) {
         var $message = $("<span/>");
@@ -115,8 +118,6 @@ define([
     var $add_section_form = $("#add_section_form"),
         $edit_section_form = $("#edit_section_form"),
         $course_form = $("#course_form"),
-        $hashtag_form = $(".hashtag_form"),
-        $course_hashtag = $("#course_hashtag"),
         $enrollment_dialog = $("#enrollment_dialog"),
         $tabBar = $("#course_details_tabs"),
         // as of jqueryui 1.9, the cookie trumps the fragment :(. so we hack
@@ -209,28 +210,15 @@ define([
       return false;
     });
     $("#nav_form").submit(function(){
-      tab_id_regex = /(\d+)$/;
-      function tab_id_from_el(el) {
-        var tab_id_str = $(el).attr("id");
-        if (tab_id_str) {
-          var tab_id = tab_id_str.replace(/^nav_edit_tab_id_/, '');
-          if (tab_id.length > 0) {
-            if(!tab_id.match(/context/)) {
-              tab_id = parseInt(tab_id, 10);
-            }
-            return tab_id;
-          }
-        }
-        return null;
-      }
+      var tab_id_regex = /(\d+)$/;
 
       var tabs = [];
       $("#nav_enabled_list li").each(function() {
-        var tab_id = tab_id_from_el(this);
+        var tab_id = CourseSettingsHelper.tabIdFromElement(this);
         if (tab_id !== null) { tabs.push({ id: tab_id }); }
       });
       $("#nav_disabled_list li").each(function() {
-        var tab_id = tab_id_from_el(this);
+        var tab_id = CourseSettingsHelper.tabIdFromElement(this);
         if (tab_id !== null) { tabs.push({ id: tab_id, hidden: true }); }
       });
 
@@ -253,23 +241,6 @@ define([
       axis: 'y'
     }).disableSelection();
 
-
-    $(".hashtag_dialog_link").click(function(event) {
-      event.preventDefault();
-      $("#hashtag_dialog").dialog({
-        title: I18n.t('titles.hashtag_help', "What's a Hashtag?"),
-        width: 500
-      });
-    });
-    $(".close_dialog_button").click(function() {
-      $("#hashtag_dialog").dialog('close');
-    });
-    $("#course_hashtag").bind('blur change keyup', function() {
-      var val = $(this).val() || "";
-      val = val.replace(/(\s)+/g, "_").replace(/#/, "");
-      $("#hashtag_options").showIf(val && val !== "");
-      $(this).val(val);
-    });
     $(document).fragmentChange(function(event, hash) {
       function handleFragmentType(val){
         $("#tab-users-link").click();
@@ -284,24 +255,18 @@ define([
         handleFragmentType("TeacherEnrollment");
       }
     });
-    $(".edit_course_link").click(function(event) {
-      event.preventDefault();
-      $("#course_form").addClass('editing').find(":text:first").focus().select();
-      $("#course_account_id_lookup").autocomplete({
-        source: $("#course_account_id_url").attr('href'),
-        select: function(event, ui){
-          $("#course_account_id").val(ui.item.id);
-        }
-      });
-      $hashtag_form.showIf($course_hashtag.text().length > 0);
-      $course_hashtag.triggerHandler('blur');
+    $("#course_account_id_lookup").autocomplete({
+      source: $("#course_account_id_url").attr('href'),
+      select: function (event, ui) {
+        $("#course_account_id").val(ui.item.id);
+      }
     });
     $(".move_course_link").click(function(event) {
       event.preventDefault();
       $("#move_course_dialog").dialog({
         title: I18n.t('titles.move_course', "Move Course"),
         width: 500
-      });
+      }).fixDialogButtons();
     });
     $("#move_course_dialog").delegate('.cancel_button', 'click', function() {
       $("#move_course_dialog").dialog('close');
@@ -309,62 +274,28 @@ define([
     $course_form.find(".grading_standard_checkbox").change(function() {
       $course_form.find(".grading_standard_link").showIf($(this).attr('checked'));
     }).change();
+    $course_form.find("#course_conclude_at").change(function() {
+      var $warning = $course_form.find("#course_conclude_at_warning");
+      var $parent = $(this).parent();
+      var date = $(this).data('unfudged-date');
+      var isMidnight = tz.isMidnight(date);
+      $warning.detach().appendTo($parent).showIf(isMidnight);
+    });
     $course_form.formSubmit({
-      processData: function(data) {
-        data['course[hashtag]'] = (data['course[hashtag]'] || "").replace(/\s/g, "_").replace(/#/g, "");
-        if(data['course[start_at]']) {
-          data['course[start_at]'] += " 12:00am";
-        }
-        if(data['course[conclude_at]']) {
-          data['course[conclude_at]'] += " 11:55pm";
-        }
-        return data;
-      },
       beforeSubmit: function(data) {
-        $(this).loadingImage().removeClass('editing');
+        $(this).loadingImage();
         $(this).find(".readable_license,.account_name,.term_name,.grading_scheme_set").text("...");
         $(this).find(".storage_quota_mb").text(data['course[storage_quota_mb]']);
         $(".course_form_more_options").hide();
       },
       success: function(data) {
-        var course = data.course;
-        course.start_at = $.parseFromISO(course.start_at).datetime_formatted;
-        course.conclude_at = $.parseFromISO(course.conclude_at).datetime_formatted;
-        course.is_public = course.is_public ? I18n.t('public_course', 'Public') : I18n.t('private_course', 'Private');
-        course.indexed = course.indexed ? I18n.t('indexed_course', "Included in public course index") : "";
-        course.grading_scheme_set = course.grading_standard_title || (course.grading_standard_id ? I18n.t('grading_standard_set', "Currently Set") : I18n.t('grading_standard_unset', "Not Set"));
-        course.restrict_dates = course.restrict_enrollments_to_course_dates ? I18n.t('course_dates_enforced', "Users can only participate in the course between these dates") : I18n.t('course_dates_unenforced', "These dates will not affect course availability");
-        course.locale = $("#course_locale option[value='" + (course.locale || '') + "']").text();
-        if (course.locale != $course_form.find('.locale').text()) {
-          location.reload();
-          return;
-        }
-        $(this).loadingImage('remove');
-        $("#course_form .public_options").showIf(course.is_public);
-        $("#course_form .self_enrollment_message").css('display', course.self_enrollment ? '' : 'none');
-        $("#course_form").fillTemplateData({data: course});
-        if (course.self_enrollment_code) {
-          $("#course_form .self_enrollment_message b").each(function() {
-            $(this).text($.replaceTags($(this).text(), 'self_enrollment_code', course.self_enrollment_code));
-          });
-        }
-        $(".hashtag_form").showIf($("#course_hashtag").text().length > 0);
+        $('#course_reload_form').submit();
       },
       error: function(data) {
         $(this).loadingImage('remove');
-        $(".edit_course_link").click();
-        $(this).formErrors(data);
-      }
+      },
+      disableWhileLoading: 'spin_on_success'
     })
-    .find(".cancel_button")
-      .click(function() {
-        $course_form.removeClass('editing');
-        $hashtag_form.showIf($course_hashtag.text().length > 0);
-        $(".course_form_more_options").hide();
-      }).end()
-    .find(":text:not(.date_entry)").keycodes('esc', function() {
-      $course_form.find(".cancel_button:first").click();
-    });
     $(".associated_user_link").click(function(event) {
       event.preventDefault();
       var $user = $(this).parents(".user");
@@ -381,11 +312,10 @@ define([
         }
       });
     });
-    $(".course_info").attr('title', I18n.t('titles.click_to_edit', 'Click to Edit')).click(function(event) {
+    $(".course_info").not('.uneditable').click(function(event) {
       if (event.target.nodeName == "INPUT") {
         return;
       }
-      $(".edit_course_link:first").click();
       var $obj = $(this).parents("td").find(".course_form");
       if($obj.length) {
         $obj.focus().select();
@@ -393,7 +323,10 @@ define([
     });
     $(".course_form_more_options_link").click(function(event) {
       event.preventDefault();
-      $(".course_form_more_options").slideToggle();
+      var $moreOptions = $(".course_form_more_options");
+      var optionText = $moreOptions.is(':visible') ? I18n.t('links.more_options', 'more options') : I18n.t('links.fewer_options', 'fewer options');
+      $(this).text(optionText);
+      $moreOptions.slideToggle();
     });
    $enrollment_dialog.find(".cancel_button").click(function() {
       $enrollment_dialog.dialog('close');
@@ -415,7 +348,7 @@ define([
         $link.text(I18n.t('errors.invitation', "Invitation Failed.  Please try again."));
       });
     });
-    $(".date_entry").date_field();
+    $(".date_entry").datetime_field({alwaysShowTime: true});
 
     $().data('current_default_wiki_editing_roles', $("#course_default_wiki_editing_roles").val());
     $("#course_default_wiki_editing_roles").change(function() {
@@ -446,9 +379,6 @@ define([
     $("#enrollment_type").change(function() {
       $(".teacherless_invite_message").showIf($(this).find(":selected").hasClass('teacherless_invite'));
     });
-    $(".is_public_checkbox").change(function() {
-      $(".public_options").showIf($(this).attr('checked'));
-    }).change();
 
     $(".self_enrollment_checkbox").change(function() {
       $(".open_enrollment_holder").showIf($(this).attr('checked'));
@@ -458,7 +388,7 @@ define([
       event.preventDefault();
       GradePublishing.publish();
     });
-    if (typeof(sisPublishEnabled) != 'undefined' && sisPublishEnabled) {
+    if (ENV.PUBLISHING_ENABLED) {
       GradePublishing.checkup();
     }
 
@@ -468,11 +398,60 @@ define([
         title: I18n.t('titles.reset_course_content_dialog_help', "Reset Course Content"),
         width: 500
       });
-    });
+
+      $(".ui-dialog").focus();
+    }).fixDialogButtons();
     $("#reset_course_content_dialog .cancel_button").click(function() {
       $("#reset_course_content_dialog").dialog('close');
     });
 
-    $.scrollSidebar();
+    $("#course_custom_course_visibility").click(function(event) {
+      $("#customize_course_visibility").toggle(this.checked);
+    });
+
+    $("#course_custom_course_visibility").ready(function(event) {
+      if($("#course_custom_course_visibility").prop('checked')) {
+        $("#customize_course_visibility").toggle(true);
+      } else {
+        $("#customize_course_visibility").toggle(false);
+      }
+    });
+
+    $("#course_course_visibility").change(function(event) {
+      var order = $(this).children();
+      var selected = $(this).find(":selected");
+      $.each($('#customize_course_visibility select'), function(i, sel){
+        $(sel).children('option').remove();
+        for(var i=$.inArray(selected[0], order), len=order.length; i < len; i++) {
+          $(order[i]).clone().appendTo($(sel));
+        }
+      });
+      $('#customize_course_visibility select').val($("#course_course_visibility").val())
+    });
+
+    $("#course_custom_course_visibility").ready(function(event) {
+      var order = $("#course_course_visibility").children();
+      var selected = $("#course_course_visibility").find(":selected");
+      var current = $('#customize_course_visibility select').find(":selected");
+      $.each($('#customize_course_visibility select'), function(i, sel){
+        $(sel).children('option').remove();
+        for(var i=$.inArray(selected[0], order), len=order.length; i < len; i++) {
+          $(order[i]).clone().appendTo($(sel));
+        }
+      });
+      $('#customize_course_visibility select').val($(current).val())
+    });
+
+    $("#course_show_announcements_on_home_page").change(function(event) {
+      $("#course_home_page_announcement_limit").prop("disabled", !$(this).prop('checked'))
+    });
+
+    if ($('#course_blueprint').is(':checked')) {
+      $('#master_course_restrictions').show();
+    }
+    $('#course_blueprint').change(function(event) {
+      $('#master_course_restrictions').slideToggle();
+      forceScreenReaderToReparse($('#master_course_restrictions')[0]);
+    });
   });
 });

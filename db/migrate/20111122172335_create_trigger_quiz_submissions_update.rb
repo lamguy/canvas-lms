@@ -2,7 +2,9 @@
 # While you can edit this file, any changes you make to the definitions here
 # will be undone by the next auto-generated trigger migration.
 
-class CreateTriggerQuizSubmissionsUpdate < ActiveRecord::Migration
+class CreateTriggerQuizSubmissionsUpdate < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     create_trigger("quiz_submissions_after_update_row_when_new_submission_id_is__tr", :generated => true, :compatibility => 1).
         on("quiz_submissions").

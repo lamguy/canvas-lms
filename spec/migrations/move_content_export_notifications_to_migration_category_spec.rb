@@ -26,7 +26,7 @@ describe 'DataFixup::MoveContentExportNotificationsToMigrationCategory' do
 
     users = []
     3.times do |i|
-      u = user(:active_user => true)
+      u = user_factory(active_user: true)
       cc = u.communication_channels.create(:path => "user#{i}@example.com").tap{|cc| cc.confirm!} 
       NotificationPolicy.create(:notification => @n1, :communication_channel => cc, :frequency => "daily")
       NotificationPolicy.create(:notification => @n2, :communication_channel => cc, :frequency => "daily")
@@ -37,8 +37,8 @@ describe 'DataFixup::MoveContentExportNotificationsToMigrationCategory' do
 
     users.each do |u|
       nps = NotificationPolicy.for(u)
-      nps.count.should == 1
-      nps.first.notification.should == @n2
+      expect(nps.count).to eq 1
+      expect(nps.first.notification).to eq @n2
     end
   end
 end

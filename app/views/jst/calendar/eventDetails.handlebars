@@ -1,5 +1,5 @@
 <div class="event-details carat-bottom">
-  <a href="#" class="popover_close x-close-link close">×</a>
+  <a href="#" class="popover_close x-close-link close" role="button" aria-label="{{#t "close"}}Close{{/t}}">×</a>
   <div class='event-details-header'>
     <h3 class="details_title title">
       {{#if showEventLink}}
@@ -20,6 +20,12 @@
               <br><span class="event-details-actual-context">{{actualContextInfo.name}}</span>
             {{/if}}
           </td>
+          {{#if isGreaterThanOne}}
+            <td title="{{list contextsName}}">
+              {{#t}} + {{n contextsCount}} more{{/t}}
+              <span class="screenreader-only">{{list contextsName}}</span>
+            </td>
+          {{/if}}
         </tr>
       {{/if}}
       {{#if location_name}}
@@ -28,6 +34,12 @@
           <td>{{location_name}}</td>
         </tr>
       {{/if}}
+      {{#if location_address}}
+              <tr>
+                <th scope="row">{{#t "location_address"}}Address{{/t}}</th>
+                <td>{{location_address}}</td>
+              </tr>
+            {{/if}}
       {{#if description}}
         <tr>
           <th scope="row">{{#t "details"}}Details{{/t}}</th>
@@ -45,7 +57,10 @@
                 {{#each reservations}}
                   <li data-url="{{event_url}}">
                     <div class="ellipsis">{{name}}</div>
-                    <a href="javascript:void(0)" class="cancel_appointment_link"></a>
+                    <a href="javascript:void(0)" class="cancel_appointment_link" title="{{#t}}Remove attendee {{name}}{{/t}}">
+                      <i class="icon-x" aria-hidden="true"></i>
+                      <span class="screenreader-only">{{#t}}Remove attendee {{name}}{{/t}}</span>
+                    </a>
                   </li>
                 {{/each}}
               </ul>
@@ -65,6 +80,27 @@
           <td>{{availableSlotsText}}</td>
         </tr>
       {{/if}}
+      {{#if reserve_comments}}
+        <tr>
+          <th scope="row">{{#t}}Comments{{/t}}</th>
+          <td>{{reserve_comments}}</td>
+        </tr>
+      {{else}}
+        {{#if reservations}}
+          <tr>
+            <th scope="row">{{#t}}Comments{{/t}}</th>
+            <td>
+              <ul>
+                {{#each reservations}}
+                  {{#if comments}}
+                    <li><em>{{name}}</em>: {{comments}}</li>
+                  {{/if}}
+                {{/each}}
+              </ul>
+            </td>
+          </tr>
+        {{/if}}
+      {{/if}}
     </table>
     <div class="details_description lock_explanation">{{{lock_explanation}}}</div>
     {{#if available_slots_text}}
@@ -74,23 +110,34 @@
     {{/if}}
   </div>
   <div class="popover-links-holder event-details-footer">
-    {{#if can_delete }}
-      <a href="#" class="button-secondary delete_event_link">{{#t "links.delete"}}Delete{{/t}}</a>
-    {{/if}}
-    <div class="event-details-links">
-      {{#if can_reserve }}
-        <a href="#" class="reserve_event_link"><strong>{{#t "links.reserve"}}Reserve{{/t}}</strong></a>
-      {{/if}}
-      {{#if can_unreserve }}
-        <a href="#" class="unreserve_event_link">{{#t "links.unreserve"}}Un-reserve{{/t}}</a>
+    <div class="pull-right">
+      {{#ifAll can_edit is_appointment_group use_new_scheduler}}
+        <a href={{editGroupURL}} class="group_details Button Button--small">{{#t}}Group Details{{/t}}</a>
+      {{/ifAll}}
+      {{#if can_delete }}
+        <button class="event_button Button Button--small delete_event_link">{{#t "links.delete"}}Delete{{/t}}</button>
       {{/if}}
       {{#if can_edit }}
-        <a href="#" class="edit_event_link">{{#t "links.edit"}}Edit{{/t}}</a>
+        <button class="event_button edit_event_link Button Button--small Button--primary">{{#t "links.edit"}}Edit{{/t}}</button>
       {{/if}}
-      {{#if reservations }}
-        <a href="#" class="message_students">
-          {{#t "message_students"}}Message students{{/t}}
-        </a>
+    </div>
+    <div class="event-details-links">
+      {{#if can_reserve }}
+        <p>
+          <label for="appointment-comment"><b>{{#t}}Comments{{/t}}</b></label><br />
+          <textarea id="appointment-comment" maxlength="255" name="appointment-comment"/>
+        </p>
+        <button class="reserve_event_link Button Button--small Button--link"><strong>{{#t "links.reserve"}}Reserve{{/t}}</strong></button>
+      {{/if}}
+      {{#if can_unreserve }}
+        <button class="unreserve_event_link Button Button--small Button--link">{{#t "links.unreserve"}}Un-reserve{{/t}}</button>
+      {{/if}}
+      {{#if can_edit}}
+        {{#if reservations }}
+          <button class="message_students Button Button--small Button--link">
+            {{#t "message_students"}}Message students{{/t}}
+          </button>
+        {{/if}}
       {{/if}}
     </div>
   </div>

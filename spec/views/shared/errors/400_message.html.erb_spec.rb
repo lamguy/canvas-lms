@@ -26,10 +26,10 @@ describe "/shared/errors/400_message" do
     begin
       nil.bad_method
     rescue => e
-      assigns[:exception] = e
+      assign(:exception, e)
     end
-    render "shared/errors/400_message", :locals => {:exception => assigns[:exception], :status => ""}
-    response.should_not be_nil
+    render "shared/errors/400_message"
+    expect(response).not_to be_nil
   end
 end
 

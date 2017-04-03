@@ -16,27 +16,31 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
+require 'atom'
+
 class AnnouncementsController < ApplicationController
   include Api::V1::DiscussionTopics
 
-  before_filter :require_context, :except => :public_feed
-  before_filter { |c| c.active_tab = "announcements" }
+  before_action :require_context, :except => :public_feed
+  before_action { |c| c.active_tab = "announcements" }
 
   def index
-    if authorized_action(@context, @current_user, :read)
-      return if @context.class.const_defined?('TAB_ANNOUNCEMENTS') && !tab_enabled?(@context.class::TAB_ANNOUNCEMENTS)
-      log_asset_access("announcements:#{@context.asset_string}", "announcements", "other")
-      respond_to do |format|
-        format.html do
-          add_crumb(t(:announcements_crumb, "Announcements"))
-          can_create = @context.announcements.new.grants_right?(@current_user, session, :create)
-          js_env :permissions => {
-            :create => can_create,
-            :moderate => can_create
-          }
-          js_env :is_showing_announcements => true
-          js_env :atom_feed_url => feeds_announcements_format_path((@context_enrollment || @context).feed_code, :atom)
-        end
+    return unless authorized_action(@context, @current_user, :read)
+    return if @context.class.const_defined?('TAB_ANNOUNCEMENTS') && !tab_enabled?(@context.class::TAB_ANNOUNCEMENTS)
+
+    log_asset_access([ "announcements", @context ], "announcements", "other")
+    respond_to do |format|
+      format.html do
+        add_crumb(t(:announcements_crumb, "Announcements"))
+        can_create = @context.announcements.temp_record.grants_right?(@current_user, session, :create)
+        js_env :permissions => {
+          :create => can_create,
+          :moderate => can_create
+        }
+        js_env :is_showing_announcements => true
+        js_env :atom_feed_url => feeds_announcements_format_path((@context_enrollment || @context).feed_code, :atom)
+
+        set_tutorial_js_env
       end
     end
   end
@@ -47,7 +51,9 @@ class AnnouncementsController < ApplicationController
 
   def public_feed
     return unless get_feed_context
-    announcements = @context.announcements.active.find(:all, :order => 'posted_at DESC', :limit => 15).reject{|a| a.locked_for?(@current_user, :check_policies => true) }
+    announcements = @context.announcements.active.order('posted_at DESC').limit(15).
+      select{|a| a.visible_for?(@current_user) }
+
     respond_to do |format|
       format.atom {
         feed = Atom::Feed.new do |f|
@@ -59,7 +65,7 @@ class AnnouncementsController < ApplicationController
         announcements.each do |e|
           feed.entries << e.to_atom
         end
-        render :text => feed.to_xml
+        render :plain => feed.to_xml
       }
       format.rss {
         @announcements = announcements
@@ -79,9 +85,8 @@ class AnnouncementsController < ApplicationController
           channel.items << item
         end
         rss.channel = channel
-        render :text => rss.to_s
+        render :plain => rss.to_s
       }
     end
   end
-
 end

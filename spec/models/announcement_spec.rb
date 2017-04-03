@@ -18,37 +18,109 @@
 
 require File.expand_path(File.dirname(__FILE__) + '/../spec_helper.rb')
 
+require 'nokogiri'
+
 describe Announcement do
   it "should create a new instance given valid attributes" do
     @context = Course.create
     @context.announcements.create!(valid_announcement_attributes)
   end
-  
+
+  describe "locking" do
+    it "should lock if its course has the lock_all_announcements setting" do
+      course_with_student(:active_all => true)
+
+      @course.lock_all_announcements = true
+      @course.save!
+      announcement = @course.announcements.create!(valid_announcement_attributes)
+
+      expect(announcement).to be_locked
+      expect(announcement.grants_right?(@student, :reply)).to be_falsey
+    end
+
+    it "should not lock if its course does not have the lock_all_announcements setting" do
+      course_with_student(:active_all => true)
+
+      announcement = @course.announcements.create!(valid_announcement_attributes)
+
+      expect(announcement).not_to be_locked
+      expect(announcement.grants_right?(@student, :reply)).to be_truthy
+    end
+
+    it "should not automatically lock if it is a delayed post" do
+      course = Course.new
+      course.lock_all_announcements = true
+      course.save!
+      announcement = course.announcements.build(valid_announcement_attributes.merge(:delayed_post_at => Time.now + 1.week))
+      announcement.workflow_state = 'post_delayed'
+      announcement.save!
+
+      expect(announcement).to be_post_delayed
+    end
+
+    it "should create a single job for delayed posting even though we do a double-save" do
+      course = Course.new
+      course.lock_all_announcements = true
+      course.save!
+      expect {
+        course.announcements.create!(valid_announcement_attributes.merge(delayed_post_at: 1.week.from_now))
+      }.to change(Delayed::Job, :count).by(1)
+    end
+  end
+
+  context "permissions" do
+    it "should not allow announcements on a course" do
+      course_with_student(:active_user => 1)
+      expect(Announcement.context_allows_user_to_create?(@course, @user, {})).to be_falsey
+    end
+
+    it "should allow announcements on a group" do
+      group_with_user(:active_user => 1)
+      expect(Announcement.context_allows_user_to_create?(@group, @user, {})).to be_truthy
+    end
+
+    it 'allows announcements to be viewed without :read_forum' do
+      course_with_student(active_all: true)
+      @course.account.role_overrides.create!(permission: 'read_forum', role: student_role, enabled: false)
+      a = @course.announcements.create!(valid_announcement_attributes)
+      expect(a.grants_right?(@user, :read)).to be(true)
+    end
+
+    it 'does not allow announcements to be viewed without :read_announcements' do
+      course_with_student(active_all: true)
+      @course.account.role_overrides.create!(permission: 'read_announcements', role: student_role, enabled: false)
+      a = @course.announcements.create!(valid_announcement_attributes)
+      expect(a.grants_right?(@user, :read)).to be(false)
+    end
+
+    it 'does not allow announcements to be viewed without :read_announcements (even with moderate_forum)' do
+      course_with_teacher(active_all: true)
+      @course.account.role_overrides.create!(permission: 'read_announcements', role: teacher_role, enabled: false)
+      a = @course.announcements.create!(valid_announcement_attributes)
+      expect(a.grants_right?(@user, :read)).to be(false)
+    end
+  end
+
   context "broadcast policy" do
-    it "should sanitize message" do
-      announcement_model
-      @a.message = "<a href='#' onclick='alert(12);'>only this should stay</a>"
-      @a.save!
-      @a.message.should eql("<a href=\"#\">only this should stay</a>")
-    end
-    
-    it "should sanitize objects in a message" do
-      announcement_model
-      @a.message = "<object data=\"http://www.youtube.com/test\"></object>"
-      @a.save!
-      dom = Nokogiri(@a.message)
-      dom.css('object').length.should eql(1)
-      dom.css('object')[0]['data'].should eql("http://www.youtube.com/test")
-    end
-    
-    it "should sanitize objects in a message" do
-      announcement_model
-      @a.message = "<object data=\"http://www.youtuube.com/test\" othertag=\"bob\"></object>"
-      @a.save!
-      dom = Nokogiri(@a.message)
-      dom.css('object').length.should eql(1)
-      dom.css('object')[0]['data'].should eql("http://www.youtuube.com/test")
-      dom.css('object')[0]['othertag'].should eql(nil)
+    context "sanitization" do
+      before :once do
+        announcement_model
+      end
+
+      it "should sanitize message" do
+        @a.message = "<a href='#' onclick='alert(12);'>only this should stay</a>"
+        @a.save!
+        expect(@a.message).to eql("<a href=\"#\">only this should stay</a>")
+      end
+
+      it "should sanitize objects in a message" do
+        @a.message = "<object data=\"http://www.youtuube.com/test\" othertag=\"bob\"></object>"
+        @a.save!
+        dom = Nokogiri(@a.message)
+        expect(dom.css('object').length).to eql(1)
+        expect(dom.css('object')[0]['data']).to eql("http://www.youtuube.com/test")
+        expect(dom.css('object')[0]['othertag']).to eql(nil)
+      end
     end
 
     it "should broadcast to students and observers" do
@@ -57,15 +129,35 @@ describe Announcement do
 
       notification_name = "New Announcement"
       n = Notification.create(:name => notification_name, :category => "TestImmediately")
+      n2 = Notification.create(:name => "Announcement Created By You", :category => "TestImmediately")
+
+      channel = @teacher.communication_channels.create(:path => "test_channel_email_#{@teacher.id}", :path_type => "email")
+      channel.confirm
+
       NotificationPolicy.create(:notification => n, :communication_channel => @student.communication_channel, :frequency => "immediately")
       NotificationPolicy.create(:notification => n, :communication_channel => @observer.communication_channel, :frequency => "immediately")
+      NotificationPolicy.create(:notification => n2, :communication_channel => channel, :frequency => "immediately")
 
       @context = @course
-      announcement_model
+      announcement_model(:user => @teacher)
 
       to_users = @a.messages_sent[notification_name].map(&:user)
-      to_users.should include(@student)
-      to_users.should include(@observer)
+      expect(to_users).to include(@student)
+      expect(to_users).to include(@observer)
+      expect(@a.messages_sent["Announcement Created By You"].map(&:user)).to include(@teacher)
+    end
+
+    it "should not broadcast if read_announcements is diabled" do
+      Account.default.role_overrides.create!(:role => student_role, :permission => 'read_announcements', :enabled => false)
+      course_with_student(:active_all => true)
+      notification_name = "New Announcement"
+      n = Notification.create(:name => notification_name, :category => "TestImmediately")
+      NotificationPolicy.create(:notification => n, :communication_channel => @student.communication_channel, :frequency => "immediately")
+
+      @context = @course
+      announcement_model(:user => @teacher)
+
+      expect(@a.messages_sent[notification_name]).to be_blank
     end
   end
 end

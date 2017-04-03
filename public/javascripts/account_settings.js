@@ -1,6 +1,8 @@
 define([
   'i18n!account_settings',
   'jquery', // $
+  'tinymce.config',
+  'global_announcements',
   'jquery.ajaxJSON', // ajaxJSON
   'jquery.instructure_date_and_time', // date_field, time_field, datetime_field, /\$\.datetime/
   'jquery.instructure_forms', // formSubmit, getFormData, validateForm
@@ -8,56 +10,96 @@ define([
   'jquery.instructure_misc_helpers', // replaceTags
   'jquery.instructure_misc_plugins', // confirmDelete, showIf, /\.log/
   'jquery.loadingImg', // loadingImg, loadingImage
-  'compiled/tinymce',
-  'tinymce.editor_box', // editorBox
   'vendor/date', // Date.parse
   'vendor/jquery.scrollTo', // /\.scrollTo/
   'jqueryui/tabs' // /\.tabs/
-], function(I18n, $) {
+], function(I18n, $, EditorConfig, globalAnnouncements) {
+
+  function openReportDescriptionLink (event) {
+    event.preventDefault();
+    var title = $(this).parents('.title').find('span.title').text();
+    var $desc = $(this).parent('.reports').find('.report_description');
+    $desc.clone().dialog({
+      title: title,
+      width: 800
+    });
+  }
+
+  function addUsersLink (event) {
+    event.preventDefault();
+    var $enroll_users_form = $('#enroll_users_form');
+    $(this).hide();
+    $enroll_users_form.show();
+    $('html,body').scrollTo($enroll_users_form);
+    $enroll_users_form.find('#admin_role_id').focus().select();
+  }
 
   $(document).ready(function() {
+    function checkFutureListingSetting () {
+      if ($('#account_settings_restrict_student_future_view_value').is(':checked')) {
+        $('.future_listing').show();
+      } else {
+        $('.future_listing').hide();
+      }
+    }
+    checkFutureListingSetting();
+    $('#account_settings_restrict_student_future_view_value').change(checkFutureListingSetting);
+
     $("#account_settings").submit(function() {
+      var $this = $(this);
+      var remove_ip_filters = true;
       $(".ip_filter .value").each(function() {
         $(this).removeAttr('name');
       }).filter(":not(.blank)").each(function() {
         var name = $.trim($(this).parents(".ip_filter").find(".name").val().replace(/\[|\]/g, '_'));
         if(name) {
+          remove_ip_filters = false;
           $(this).attr('name', 'account[ip_filters][' + name + ']');
         }
       });
-    });
-    $(".datetime_field").datetime_field();
-    $("#add_notification_form textarea").editorBox().width('100%');
-    $("#add_notification_form .datetime_field").bind('blur change', function() {
-      var date = Date.parse($(this).val());
-      if(date) {
-        date = date.toString($.datetime.defaultFormat);
+
+      if (remove_ip_filters) {
+        $this.append("<input class='remove_ip_filters' type='hidden' name='account[remove_ip_filters]' value='1'/>");
+      } else {
+        $this.find('.remove_ip_filters').remove(); // just in case it's left over after a failed validation
       }
-      $(this).val(date);
-    });
-    $("#add_notification_form").submit(function(event) {
-      var result = $(this).validateForm({
-        object_name: 'account_notification',
-        required: ['start_at', 'end_at', 'subject', 'message'],
-        date_fields: ['start_at', 'end_at']
-      });
+
+      var account_validations = {
+        object_name: 'account',
+        required: ['name'],
+        property_validations: {
+          'name': function(value){
+            if (value && value.length > 255) { return I18n.t("account_name_too_long", "Account Name is too long")}
+          }
+        }
+      };
+
+      var result = $this.validateForm(account_validations)
+
+      // Work around for Safari to enforce help menu name validation until `required` is supported
+      if ($('#custom_help_link_settings').length > 0) {
+        var help_menu_validations = {
+          object_name: 'account[settings]',
+          required: ['help_link_name'],
+          property_validations: {
+            'help_link_name': function(value){
+              if (value && value.length > 30) { return I18n.t("help_menu_name_too_long", "Help menu name is too long")}
+            }
+          }
+        }
+        result = (result && $this.validateForm(help_menu_validations));
+      }
+
       if(!result) {
         return false;
       }
     });
-    $(".delete_notification_link").click(function(event) {
-      event.preventDefault();
-      var $link = $(this);
-      $link.parents("li").confirmDelete({
-        url: $link.attr('rel'),
-        message: I18n.t('confirms.delete_announcement', "Are you sure you want to delete this announcement?"),
-        success: function() {
-          $(this).slideUp(function() {
-            $(this).remove();
-          });
-        }
-      });
-    });
+    $("#account_notification_start_at,#account_notification_end_at").datetime_field({addHiddenInput: true});
+    $(".datetime_field").datetime_field();
+
+    globalAnnouncements.augmentView()
+    globalAnnouncements.bindDomEvents()
+
     $("#account_settings_tabs").tabs().show();
     $(".add_ip_filter_link").click(function(event) {
       event.preventDefault();
@@ -78,6 +120,7 @@ define([
         width: 400
       });
     });
+
     $(".open_registration_delegated_warning_link").click(function(event) {
       event.preventDefault();
       $("#open_registration_delegated_warning_dialog").dialog({
@@ -86,6 +129,15 @@ define([
       });
     });
 
+    $('#account_settings_external_notification_warning_checkbox').on('change', function(e) {
+      $('#account_settings_external_notification_warning').val($(this).prop('checked') ? 1 : 0);
+    });
+
+    $(".custom_help_link .delete").click(function(event) {
+      event.preventDefault();
+      $(this).parents(".custom_help_link").find(".custom_help_link_state").val('deleted');
+      $(this).parents(".custom_help_link").hide();
+    });
 
     var $blankCustomHelpLink = $('.custom_help_link.blank').detach().removeClass('blank'),
         uniqueCounter = 1000;
@@ -100,10 +152,6 @@ define([
           return previous.replace(/\d+/, newId);
         });
       });
-    });
-    $(".custom_help_link .delete").click(function(event) {
-      event.preventDefault();
-      $(this).parents(".custom_help_link").remove();
     });
 
     $(".remove_account_user_link").click(function(event) {
@@ -120,13 +168,25 @@ define([
       });
     });
 
-    $("#turnitin, #account_settings_global_includes, #enable_equella").change(function() {
-      var $myFieldset = $('#'+ $(this).attr('id') + '_settings'),
-          iAmChecked = $(this).attr('checked');
+    $('#enable_equella, ' +
+      '#account_settings_sis_syncing_value, ' +
+      '#account_settings_sis_default_grade_export_value').change(function () {
+        var $myFieldset = $('#'+ $(this).attr('id') + '_settings');
+        var iAmChecked = $(this).prop('checked');
       $myFieldset.showIf(iAmChecked);
       if (!iAmChecked) {
-        $myFieldset.find("input,textarea").val("");
+        $myFieldset.find(":text").val("");
+        $myFieldset.find(":checkbox").prop("checked", false);
       }
+    }).change();
+
+    $('#account_settings_sis_syncing_value,' +
+      '#account_settings_sis_default_grade_export_value,' +
+      '#account_settings_sis_assignment_name_length_value').change(function() {
+        var attr_id = $(this).attr('id');
+        var $myFieldset = $('#'+ attr_id + '_settings');
+        var iAmChecked = $(this).attr('checked');
+        $myFieldset.showIf(iAmChecked);
     }).change();
 
     $(".turnitin_account_settings").change(function() {
@@ -137,9 +197,13 @@ define([
       var $link = $(this);
       var url = $link.attr('href');
       var account = $("#account_settings").getFormData({object_name: 'account'});
-      url = $.replaceTags($.replaceTags(url, 'account_id', account.turnitin_account_id), 'shared_secret', account.turnitin_shared_secret);
+      var turnitin_data = {
+        turnitin_account_id: account.turnitin_account_id,
+        turnitin_shared_secret: account.turnitin_shared_secret,
+        turnitin_host: account.turnitin_host
+      }
       $link.text(I18n.t('notices.turnitin.checking_settings', "checking Turnitin settings..."));
-      $.ajaxJSON(url, 'GET', {}, function(data) {
+      $.getJSON(url, turnitin_data, function(data) {
         if(data && data.success) {
           $link.text(I18n.t('notices.turnitin.setings_confirmed', "Turnitin settings confirmed!"));
         } else {
@@ -151,23 +215,9 @@ define([
     });
 
     // Admins tab
-    $(".add_users_link").click(function(event) {
-        var $enroll_users_form = $("#enroll_users_form");
-        $(this).hide();
-        event.preventDefault();
-        $enroll_users_form.show();
-        $("html,body").scrollTo($enroll_users_form);
-        $enroll_users_form.find("textarea").focus().select();
-      });
+    $(".add_users_link").click(addUsersLink);
 
-    $(".open_report_description_link").click(function(event) {
-      event.preventDefault();
-      var title = $(this).parents(".title").find("span.title").text();
-      $(this).parent(".reports").find(".report_description").dialog({
-        title: title,
-        width: 800
-      });
-    });
+    $(".open_report_description_link").click(openReportDescriptionLink);
 
     $(".run_report_link").click(function(event) {
       event.preventDefault();
@@ -182,7 +232,7 @@ define([
       },
       success: function(data) {
         $(this).loadingImage('remove');
-        var report = $(this).find('input[name="report_type"]').val();
+        var report = $(this).attr('id').replace('_form', '');
         $("#" + report).find('.run_report_link').hide()
           .end().find('.configure_report_link').hide()
           .end().find('.running_report_message').show();
@@ -217,15 +267,51 @@ define([
         width: 560
       });
 
-      $('<a class="help" href="#">&nbsp;</a>')
+      $('<a href="#"><i class="icon-question standalone-icon"></i></a>')
         .click(function(event){
           event.preventDefault();
           $dialog.dialog('open');
         })
         .appendTo('label[for="account_services_' + serviceName + '"]');
     });
+
+    function displayCustomEmailFromName(){
+      var displayText = $('#account_settings_outgoing_email_default_name').val();
+      if (displayText == '') {
+        displayText = I18n.t('custom_text_blank', '[Custom Text]');
+      }
+      $('#custom_default_name_display').text(displayText);
+    }
+    $('.notification_from_name_option').on('change', function(){
+      var $useCustom = $('#account_settings_outgoing_email_default_name_option_custom');
+      var $customName = $('#account_settings_outgoing_email_default_name');
+      if ($useCustom.attr('checked')) {
+        $customName.removeAttr('disabled');
+        $customName.focus()
+      }
+      else {
+        $customName.attr('disabled', 'disabled');
+      }
+    });
+    $('#account_settings_outgoing_email_default_name').on('keyup', function(){
+      displayCustomEmailFromName();
+    });
+    // Setup initial display state
+    displayCustomEmailFromName();
+    $('.notification_from_name_option').trigger('change');
+
+    $('#account_settings_self_registration').change(function() {
+      $('#self_registration_type_radios').toggle(this.checked);
+    }).trigger('change');
+
+    $('#account_settings_global_includes').change(function() {
+      $('#global_includes_warning_message_wrapper').toggleClass('alert', this.checked);
+    }).trigger('change');
   });
 
+  return {
+    addUsersLink: addUsersLink,
+    openReportDescriptionLink: openReportDescriptionLink
+  }
+
 });
-
-

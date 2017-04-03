@@ -1,127 +1,314 @@
 shared_examples_for "permission tests" do
-  it_should_behave_like "in-process server selenium tests"
+  include_context "in-process server selenium tests"
 
   before (:each) do
     course_with_admin_logged_in
   end
 
-  def has_default_permission?(permission, enrollment_type)
-    default_permissions = Permissions.retrieve
-    default_permissions[permission][:true_for].include?(enrollment_type)
+  def select_permission_option(permission_name, role, index)
+    fj("td[data-permission_name='#{permission_name}'].[data-role_id='#{role.id}'] a").click
+    # driver.execute_script("$('td[data-permission_name=\"#{permission_name}\"].[data-role_id=\"#{role.id}\"] a').click()")
+    wait_for_ajaximations
+    ffj("td[data-permission_name='#{permission_name}'].[data-role_id='#{role.id}'] label")[index].click
+    # driver.execute_script("$('td[data-permission_name=\"#{permission_name}\"].[data-role_id=\"#{role.id}\"] label')[#{index}].click()")
+    wait_for_ajaximations #Every select needs to wait for for the request to finish
   end
 
-  def get_updated_role(permission, enrollment_type)
-    RoleOverride.first(:conditions => {:permission => permission.to_s, :enrollment_type => enrollment_type})
+  def select_enable(permission_name, role)
+    select_permission_option(permission_name, role, 0) # 0 is Enable
   end
 
-  def get_checkbox(permission, selector, enrollment_type)
-    row = nil
-    permissions = ff("#permissions-table tr > th")
-    permissions.each do |elem|
-      if (elem.text.include? permission)
-        row = elem.find_element(:xpath, "..")
-        break
-      end
-    end
-    #enrollment type is the number corresponding to the role i.e. Student = 0, Ta = 1, Teacher = 2...
-    row.find_elements(:css, selector)[enrollment_type]
+  def select_enable_and_lock(permission_name, role)
+    select_permission_option(permission_name, role, 1) # 1 is enabled and locked
   end
 
-  def checkbox_verifier(permission, enrollment_type, disable_permission = false, locked = false)
-    selector = locked ? ".lock" : ".six-checkbox"
-    #get the element we need
-    check_box = get_checkbox(permission, selector, enrollment_type)
-    #we iterate according to the permission event
-    iterate = disable_permission ? 2 : 1
-    iterate.times { check_box.click }
-    f(".save_permissions_changes").click
-    wait_for_ajax_requests
-    check_box = get_checkbox(permission, selector, enrollment_type)
-    if (locked)
-      check_box.find_element(:xpath, "..").find_element(:css, "input").should have_value("true")
-    else
-      if (disable_permission)
-        check_box.find_element(:css, "input").should have_value("unchecked")
-      else
-        check_box.find_element(:css, "input").should have_value("checked")
-      end
-    end
+  def select_disable(permission_name, role)
+    select_permission_option(permission_name, role, 2) # 2 is Disabled
   end
 
-  def permissions_verifier(opts, default_permitted = false, disable_permission = false, locked = false)
-    if (default_permitted)
-      has_default_permission?(opts.keys[0], opts.values[0]).should be_true
-    else
-      has_default_permission?(opts.keys[0], opts.values[0]).should be_false
-    end
-    role = get_updated_role(opts.keys[0], opts.values[0])
-    role.should be_present
-    if (disable_permission)
-      role.enabled.should be_false
-    else
-      if (!locked)
-        role.enabled.should be_true
-      end
-    end
-    if (locked)
-      role.locked.should be_true
-    else
-      role.locked.should be_false
-    end
+  def select_disable_and_lock(permission_name, role)
+    select_permission_option(permission_name, role, 3) # 3 is Disabled and locked
   end
 
-  describe "new role permissions" do
-    before (:each) do
+  def select_default(permission_name, role)
+    select_permission_option(permission_name, role, 4) # 3 is Disabled and locked
+  end
+
+  def add_new_account_role(role_name)
+    role = account.roles.build({:name => role_name})
+    role.base_role_type = "AccountMembership"
+    role.save!
+    role
+  end
+
+  def add_new_course_role(role_name, role_type = "StudentEnrollment")
+    role = account.roles.build({:name => role_name})
+    role.base_role_type = role_type
+    role.save!
+    role
+  end
+
+  describe "Adding new roles" do
+    before do
       get url
     end
 
-    def add_new_role(role)
-      f(".add_new_role").send_keys(role)
-      f("#add_new_role_button").click
-      wait_for_ajax_requests
-      account.reload
-      account.membership_types.should include(role)
-      f("#permissions-table tr").should include_text(role)
+    it "adds a new account role" do
+      role_name = "an account role"
+
+      f("#account_role_link").click
+      f('#account-roles-tab a.add_role_link').click
+      wait_for_ajaximations
+      fj('form input:visible').send_keys(role_name)
+      fj('form button.btn-primary:visible').click
+      wait_for_ajaximations
+
+      expect(f('#account-roles-tab')).to include_text(role_name)
+      new_role = Role.last
+      expect(new_role.name).to eq role_name
+      expect(new_role.account_role?).to be_truthy
     end
 
-    it "should add a new account role type" do
-      role = "New Role"
-      add_new_role(role)
+    it "adds a new course role" do
+      role_name = "a course role"
+
+      f("#course_role_link").click
+      f('#course-roles-tab a.add_role_link').click
+      fj('form input:visible').send_keys(role_name)
+      fj('form button.btn-primary:visible').click
+      wait_for_ajaximations
+
+      expect(f('#course-roles-tab')).to include_text(role_name)
+      new_role = Role.last
+      expect(new_role.name).to eq role_name
+      expect(new_role.course_role?).to be_truthy
+    end
+  end
+
+  describe "Editing roles" do
+    it "edits an account role" do
+      role = add_new_account_role("name")
+      get url
+      f("#account_role_link").click
+      fj(".roleHeader a.edit_role:visible").click
+      fj('form input:visible').clear
+      fj('form input:visible').send_keys("newname")
+      fj('form button.btn-primary:visible').click
+      wait_for_ajaximations
+
+      expect(f('#account-roles-tab')).to include_text("newname")
+      role.reload
+      expect(role.name).to eq "newname"
     end
 
-    it "should delete an added role" do
-      role = "New Role"
-      add_new_role(role)
-      f(".remove_role_link").click
-      driver.switch_to.alert.accept
-      wait_for_ajax_requests
-      account.reload
-      account.membership_types.should_not include(role)
-      f("#permissions-table tr").should_not include_text(role)
+    it "edits a course role" do
+      role = add_new_course_role("name")
+      get url
+      f("#course_role_link").click
+      fj(".roleHeader a.edit_role:visible").click
+      fj('form input:visible').clear
+      fj('form input:visible').send_keys("newname")
+      fj('form button.btn-primary:visible').click
+      wait_for_ajaximations
+
+      expect(f('#course-roles-tab')).to include_text("newname")
+      role.reload
+      expect(role.name).to eq "newname"
+    end
+  end
+
+  describe "Removing roles" do
+    context "when deleting account roles" do
+      let!(:role_name) { "delete this account role" }
+
+      before do
+        @role = add_new_account_role(role_name)
+        get url
+      end
+
+      it "deletes a role" do
+        f("#account_role_link").click
+        f(".roleHeader a.delete_role").click
+        driver.switch_to.alert.accept
+        wait_for_ajaximations
+
+        expect(f('#account-roles-tab')).not_to include_text(role_name)
+        @role.reload
+        expect(@role.inactive?).to be_truthy
+      end
     end
 
-    it "should enable manage permissions of new role" do
-      role = "New Role"
-      add_new_role(role)
-      checkbox_verifier("Manage permissions", 1)
-      opts = {:manage_role_overrides => role}
-      permissions_verifier(opts)
+    context "when deleting course roles" do
+      let!(:role_name) { "delete this course role" }
+
+      before do
+        @role = add_new_course_role(role_name)
+        get url
+      end
+
+      it "deletes a role" do
+        f("#course_role_link").click
+        f(".roleHeader a.delete_role").click
+        driver.switch_to.alert.accept
+        wait_for_ajaximations
+
+        expect(f('#course-roles-tab')).not_to include_text(role_name)
+        @role.reload
+        expect(@role.inactive?).to be_truthy
+      end
+    end
+  end
+
+  describe "Managing roles" do
+    context "when managing account roles" do
+      let!(:role_name) { "TestAcccountRole" }
+      let!(:permission_name) { "read_sis" } # Everyone should have this permission
+      let!(:role) { add_new_account_role role_name }
+
+      before do
+        get url
+        f("#account_role_link").click
+      end
+
+      it "enables a permission" do
+        select_enable(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.enabled).to be_truthy
+          expect(role_override.locked).to be_falsey
+        end
+      end
+
+      it "locks and enables a permission" do
+        select_enable_and_lock(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.enabled).to be_truthy
+          expect(role_override.locked).to be_truthy
+        end
+      end
+
+      it "disables a permission" do
+        select_disable(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.enabled).to be_falsey
+          expect(role_override.locked).to be_falsey
+        end
+      end
+
+      it "locks and disables a permission" do
+        select_disable_and_lock(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.enabled).to be_falsey
+          expect(role_override.locked).to be_truthy
+        end
+      end
+
+      it "sets a permission to default" do
+        select_disable(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.nil?).to be_falsey
+        end
+
+        select_default(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.nil?).to be_truthy
+        end
+      end
     end
 
-    it "should disable manage permissions of new role" do
-      role = "New Role"
-      add_new_role(role)
-      checkbox_verifier("Manage permissions", 1, true)
-      opts = {:manage_role_overrides => role}
-      permissions_verifier(opts, false, true)
-    end
+    context "when managing course roles" do
+      let!(:role_name) { "TestCourseRole" }
+      let!(:permission_name) { "read_sis" } # Everyone should have this permission
+      let!(:role) { add_new_course_role role_name }
 
-    it "should lock manage permissions of new role" do
-      role = "New Role"
-      add_new_role(role)
-      checkbox_verifier("Manage permissions", 1, false, true)
-      opts = {:manage_role_overrides => role}
-      permissions_verifier(opts, false, false, true)
+      before do
+        get url
+        f("#course_role_link").click
+      end
+
+      it "enables a permission" do
+        select_enable(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.enabled).to be_truthy
+          expect(role_override.locked).to be_falsey
+        end
+      end
+
+      it "locks and enables a permission" do
+        select_enable_and_lock(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.enabled).to be_truthy
+          expect(role_override.locked).to be_truthy
+        end
+      end
+
+      it "disables a permission" do
+        select_disable(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.enabled).to be_falsey
+          expect(role_override.locked).to be_falsey
+        end
+      end
+
+      it "locks and disables a permission" do
+        select_disable_and_lock(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.enabled).to be_falsey
+          expect(role_override.locked).to be_truthy
+        end
+      end
+
+      it "sets a permission to default" do
+        select_disable(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.nil?).to be_falsey
+        end
+
+        select_default(permission_name, role)
+
+        keep_trying_until do
+          role_override = RoleOverride.where(:role_id => role.id).first
+          expect(role_override.nil?).to be_truthy
+        end
+      end
+
+      context "when using the keyboard" do
+        it "opens the menu on enter keypress" do
+          button = fj("td[data-permission_name='#{permission_name}'].[data-role_id='#{role.id}'] a")
+          button.send_keys(:enter)
+          expect(f('.btn-group.open')).to be_displayed
+        end
+
+        it "returns focus back to the button activated upon close" do
+          button = fj("td[data-permission_name='#{permission_name}'].[data-role_id='#{role.id}'] a")
+          button.send_keys(:enter)
+          expect(f('.btn-group.open')).to be_displayed # it opened
+          button.send_keys(:escape)
+          expect(f("#content")).not_to contain_css('.btn-group.open') # it closed
+          check_element_has_focus(button)
+        end
+      end
     end
   end
 end

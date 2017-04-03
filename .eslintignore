@@ -1,0 +1,4 @@
+public/javascripts/vendor/**/*
+
+gems/canvas_i18nliner
+doc/

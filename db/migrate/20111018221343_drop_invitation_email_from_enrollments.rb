@@ -1,4 +1,6 @@
-class DropInvitationEmailFromEnrollments < ActiveRecord::Migration
+class DropInvitationEmailFromEnrollments < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     remove_column :enrollments, :invitation_email
   end

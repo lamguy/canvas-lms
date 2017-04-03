@@ -30,7 +30,7 @@ class CountsReport
 
   def initialize
     date = Date.yesterday
-    @yesterday = Time.parse("#{date.to_s} 23:59:00 UTC")
+    @yesterday = Time.parse("#{date} 23:59:00 UTC")
     @week = date.cweek
     @timestamp = @yesterday
     @overview = {:generated_at=>@timestamp, :totals => new_counts_hash}.with_indifferent_access
@@ -40,34 +40,49 @@ class CountsReport
   end
 
   def process
-    start_time = Time.now
+    start_time = Time.zone.now
 
-    ActiveRecord::Base::ConnectionSpecification.with_environment(:slave) do
-      Shard.with_each_shard do
+    Shackles.activate(:slave) do
+      callback = -> { Shard.default.activate { Canvas::Errors.capture_exception(:periodic_job, $ERROR_INFO) } }
+      Shard.with_each_shard(exception: callback) do
         Account.root_accounts.active.each do |account|
           next if account.external_status == 'test'
-          activity = CountsReport.last_activity(account.id)
-          next unless activity
 
           data = {}.with_indifferent_access
           data[:generated_at] = @timestamp
           data[:id] = account.id
           data[:name] = account.name
           data[:external_status] = account.external_status
-          data[:last_activity] = activity
 
           course_ids = get_course_ids(account)
-
           data[:courses] = course_ids.length
-          data[:teachers] = course_ids.length == 0 ? 0 : Enrollment.count(:user_id, :distinct => true, :conditions => { :course_id => course_ids, :type => 'TeacherEnrollment' })
-          data[:students] = course_ids.length == 0 ? 0 : Enrollment.count(:user_id, :distinct => true, :conditions => { :course_id => course_ids, :type => 'StudentEnrollment' })
-          data[:users] = course_ids.length == 0 ? 0 : Enrollment.count(:user_id, :distinct => true, :conditions => ["course_id IN (?) AND type <> ?", course_ids, 'StudentViewEnrollment'])
-          # ActiveRecord::Base.calculate doesn't support multiple calculations in account single pass
-          data[:files], data[:files_size] = course_ids.length == 0 ? [0, 0] : Attachment.connection.select_rows("SELECT COUNT(id), SUM(size) FROM #{Attachment.table_name} WHERE namespace='account_%s' AND root_attachment_id IS NULL AND file_state != 'deleted'" % [account.id]).first.map(&:to_i)
-          data[:media_files], data[:media_files_size] = course_ids.length == [0, 0] ? 0 : MediaObject.connection.select_rows("SELECT COUNT(id), SUM(total_size) FROM #{MediaObject.table_name} WHERE root_account_id='%s' AND attachment_id IS NULL AND workflow_state != 'deleted'" % [account.id]).first.map(&:to_i)
-          data[:media_files_size] *= 1000
 
-          ActiveRecord::Base::ConnectionSpecification.with_environment(nil) do
+          if data[:courses] == 0
+            data[:teachers] = 0
+            data[:students] = 0
+            data[:users] = 0
+            data[:files] = 0
+            data[:files_size] = 0
+            data[:media_files] = 0
+            data[:media_files_size] = 0
+          else
+            timespan = Setting.get('recently_logged_in_timespan', 30.days.to_s).to_i.seconds
+            enrollment_scope = Enrollment.active.not_fake.
+              joins("INNER JOIN #{Pseudonym.quoted_table_name} ON enrollments.user_id=pseudonyms.user_id").
+              where(pseudonyms: { workflow_state: 'active'}).
+              where("course_id IN (?) AND pseudonyms.last_request_at>?", course_ids, timespan.seconds.ago)
+
+            data[:teachers] = enrollment_scope.where(:type => 'TeacherEnrollment').distinct.count(:user_id)
+            data[:students] = enrollment_scope.where(:type => 'StudentEnrollment').distinct.count(:user_id)
+            data[:users] = enrollment_scope.distinct.count(:user_id)
+
+            # ActiveRecord::Base.calculate doesn't support multiple calculations in account single pass
+            data[:files], data[:files_size] = Attachment.connection.select_rows("SELECT COUNT(id), SUM(size) FROM #{Attachment.quoted_table_name} WHERE namespace IN ('account_%s','account_%s') AND root_attachment_id IS NULL AND file_state != 'deleted'" % [account.local_id, account.global_id]).first.map(&:to_i)
+            data[:media_files], data[:media_files_size] = MediaObject.connection.select_rows("SELECT COUNT(id), SUM(total_size) FROM #{MediaObject.quoted_table_name} WHERE root_account_id='%s' AND attachment_id IS NULL AND workflow_state != 'deleted'" % [account.id]).first.map(&:to_i)
+            data[:media_files_size] *= 1000
+          end
+
+          Shackles.activate(:master) do
             detailed = account.report_snapshots.detailed.build
             detailed.created_at = @yesterday
             detailed.data = data
@@ -102,7 +117,7 @@ class CountsReport
     else
       progressive = start_progressive_hash.with_indifferent_access
     end
-    
+
     progressive[:generated_at] = @timestamp
     create_progressive_hashes(progressive[:totals], @overview[:totals])
     ExternalStatuses.possible_external_statuses.each do |status|
@@ -136,28 +151,28 @@ class CountsReport
     copy_counts(year, totals)
     cumulative[:yearly].pop if cumulative[:yearly].last and cumulative[:yearly].last[:year] == year[:year]
     cumulative[:yearly] << year
-    
+
     month = {:year=>@yesterday.year, :month=>@yesterday.month}
     copy_counts(month, totals)
     if cumulative[:monthly].last and cumulative[:monthly].last[:year] == month[:year] and cumulative[:monthly].last[:month] == month[:month]
-      cumulative[:monthly].pop 
+      cumulative[:monthly].pop
     end
     cumulative[:monthly] << month
     while cumulative[:monthly].length > MONTHS_TO_KEEP
       cumulative[:monthly].shift
     end
-    
+
     week = {:year=>@yesterday.year, :month=>@yesterday.month, :week=>@week}
     copy_counts(week, totals)
     if cumulative[:weekly].last and cumulative[:weekly].last[:year] == week[:year] and cumulative[:weekly].last[:week] == week[:week]
-      cumulative[:weekly].pop 
+      cumulative[:weekly].pop
     end
     cumulative[:weekly] << week
     while cumulative[:weekly].length > WEEKS_TO_KEEP
       cumulative[:weekly].shift
     end
   end
-  
+
   def copy_counts(to, from)
     to[:institutions] = from[:institutions]
     to[:courses] = from[:courses]
@@ -196,14 +211,10 @@ class CountsReport
     @overview[:totals][:users] += account[:users]
   end
 
-  def self.last_activity(account_id)
-    PageView.maximum(:created_at, :conditions => { :account_id => account_id })
-  end
-
   def get_course_ids(account)
     is_default_account = account.external_status == ExternalStatuses.default_external_status.to_s
     course_ids = []
-    account.all_courses.scoped(:conditions => { :workflow_state => 'available' }, :select => 'id, updated_at').find_in_batches do |batch|
+    account.all_courses.where(:workflow_state => 'available').select([:id, :updated_at]).find_in_batches do |batch|
       course_ids.concat batch.select { |course| !is_default_account || should_use_default_account_course(course) }.map(&:id)
     end
     course_ids
@@ -240,7 +251,6 @@ class CountsReport
     }
     hash
   end
-
 end
 
 end

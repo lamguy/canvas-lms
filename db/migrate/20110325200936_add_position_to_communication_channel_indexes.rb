@@ -1,4 +1,6 @@
-class AddPositionToCommunicationChannelIndexes < ActiveRecord::Migration
+class AddPositionToCommunicationChannelIndexes < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     remove_index :communication_channels, :column => %w(user_id)
     add_index    :communication_channels, %w(user_id position)

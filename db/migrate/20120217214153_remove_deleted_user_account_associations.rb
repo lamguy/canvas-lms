@@ -1,6 +1,8 @@
-class RemoveDeletedUserAccountAssociations < ActiveRecord::Migration
+class RemoveDeletedUserAccountAssociations < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
-    UserAccountAssociation.delete_all("user_id IN (SELECT id FROM users WHERE workflow_state IN ('deleted', 'creation_pending'))")
+    UserAccountAssociation.where("user_id IN (SELECT id FROM #{User.quoted_table_name} WHERE workflow_state IN ('deleted', 'creation_pending'))").delete_all
   end
 
   def self.down

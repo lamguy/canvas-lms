@@ -20,17 +20,37 @@ require File.expand_path(File.dirname(__FILE__) + '/../../spec_helper')
 require File.expand_path(File.dirname(__FILE__) + '/../views_helper')
 
 describe "/gradebooks/speed_grader" do
-  it "should render" do
+  before do
     course_with_student
     view_context
-    assigns[:students] = [@user]
-    assigns[:assignment] = @course.assignments.create!(:title => "some assignment")
-    assigns[:submissions] = []
-    assigns[:assessments] = []
-    assigns[:body_classes] = []
+    assign(:students, [@user])
+    assign(:assignment, @course.assignments.create!(:title => "some assignment"))
+    assign(:submissions, [])
+    assign(:assessments, [])
+    assign(:body_classes, [])
+  end
+
+  it "should render" do
     render "gradebooks/speed_grader"
-    
-    response.should_not be_nil
+    expect(rendered).not_to be_nil
+  end
+
+  it "includes a link back to the gradebook (gradebook by default)" do
+    render "gradebooks/speed_grader"
+    course_id = @course.id
+    expect(rendered).to include "a href=\"http://test.host/courses/#{course_id}/gradebook\""
+  end
+
+  it 'includes the comment auto-save message' do
+    render 'gradebooks/speed_grader'
+
+    expect(rendered).to include 'Your comment was auto-saved as a draft.'
+  end
+
+  it 'includes the link to publish' do
+    render 'gradebooks/speed_grader'
+
+    expect(rendered).to match(/button.+?class=.+?submit_comment_button/)
   end
 end
 

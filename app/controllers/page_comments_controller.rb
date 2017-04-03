@@ -21,28 +21,35 @@ class PageCommentsController < ApplicationController
     @portfolio = Eportfolio.find(params[:eportfolio_id])
     @page = @portfolio.eportfolio_entries.find(params[:entry_id])
     if authorized_action(@page, @current_user, :comment)
-      @comment = @page.page_comments.build(params[:page_comment])
+      @comment = @page.page_comments.build(params.require(:page_comment).permit(:message))
       @comment.user = @current_user
+      url = if @page.eportfolio_category.slug.blank?
+              eportfolio_url(@portfolio)
+            elsif @page.slug.blank?
+              eportfolio_named_category_url(@portfolio, @page.eportfolio_category.slug)
+            else
+              eportfolio_named_category_entry_url(@portfolio, @page.eportfolio_category.slug, @page.slug)
+            end
       respond_to do |format|
         if @comment.save
-          format.html { redirect_to eportfolio_named_category_entry_url(@portfolio.id, @page.eportfolio_category.slug, @page.slug) }
-          format.json { render :json => @comment.to_json }
+          format.html { redirect_to url }
+          format.json { render :json => @comment }
         else
           flash[:error] = t('errors.create_failed', "Comment creation failed")
-          format.html { redirect_to eportfolio_named_category_entry_url(@portfolio.id, @page.eportfolio_category.slug, @page.slug) }
-          format.json { render :json => @comment.errors.to_json, :status => :bad_request }
+          format.html { redirect_to url }
+          format.json { render :json => @comment.errors, :status => :bad_request }
         end
       end
     end
   end
-  
+
   def destroy
     @portfolio = Eportfolio.find(params[:eportfolio_id])
     @page = @portfolio.eportfolio_entries.find(params[:entry_id])
     @comment = @page.page_comments.find(params[:id])
     if authorized_action(@portfolio, @current_user, :update)
       @comment.destroy
-      render :json => @comment.to_json
+      render :json => @comment
     end
   end
 end

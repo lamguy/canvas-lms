@@ -21,55 +21,93 @@ require File.expand_path(File.dirname(__FILE__) + '/../spec_helper.rb')
 describe SubmissionList do
   it "should initialize with a course" do
     course_model
-    lambda{@sl = SubmissionList.new(@course)}.should_not raise_error
-    @sl.should be_is_a(SubmissionList)
-    @sl.course.should eql(@course)
-  
-    lambda{@sl = SubmissionList.new(@course)}.should_not raise_error
-    @sl.course.should eql(@course)
-    
-    lambda{@sl = SubmissionList.new(-1)}.should raise_error(ArgumentError, "Must provide a course.")
+    expect{@sl = SubmissionList.new(@course)}.not_to raise_error
+    expect(@sl).to be_is_a(SubmissionList)
+    expect(@sl.course).to eql(@course)
+
+    expect{@sl = SubmissionList.new(-1)}.to raise_error(ArgumentError, "Must provide a course.")
   end
-  
+
   it "should provide a dictionary in 'list'" do
     course_model
-    SubmissionList.new(@course).list.should be_is_a(Dictionary)
+    expect(SubmissionList.new(@course).list).to be_is_a(Hashery::Dictionary)
   end
-  
+
   it "should create keys in the data when versions of submissions existed" do
     interesting_submission_list
-    @sl.list.keys.should eql([Date.parse(Time.now.utc.to_s)])
+    expect(@sl.list.keys).to eql([Date.parse(Time.now.utc.to_s)])
   end
-  
+
+  it "should take the time zone into account when dividing grading history into days" do
+    course_with_teacher(:active_all => true)
+    course_with_student(:course => @course, :active_all => true)
+
+    @assignment1 = @course.assignments.create!(:title => 'one', :points_possible => 10)
+    @assignment2 = @course.assignments.create!(:title => 'two', :points_possible => 10)
+    @assignment3 = @course.assignments.create!(:title => 'three', :points_possible => 10)
+
+    Time.zone = 'Alaska'
+    Time.stubs(:now).returns(Time.utc(2011, 12, 31, 23, 0))   # 12/31 14:00 local time
+    @assignment1.grade_student(@student, {:grade => 10, :grader => @teacher})
+    Time.stubs(:now).returns(Time.utc(2012, 1, 1, 1, 0))      # 12/31 16:00 local time
+    @assignment2.grade_student(@student, {:grade => 10, :grader => @teacher})
+    Time.stubs(:now).returns(Time.utc(2012, 1, 1, 10, 0))     #  1/01 01:00 local time
+    @assignment3.grade_student(@student, {:grade => 10, :grader => @teacher})
+    Time.unstub(:now)
+
+    @days = SubmissionList.new(@course).days
+    expect(@days.size).to eq 2
+    expect(@days[0].date).to eq Date.new(2012, 1, 1)
+    expect(@days[0].graders[0].assignments.size).to eq 1
+    expect(@days[1].date).to eq Date.new(2011, 12, 31)
+    expect(@days[1].graders[0].assignments.size).to eq 2
+  end
+
+  it "handles excused assignments" do
+    course_with_teacher(:active_all => true)
+    course_with_student(:course => @course, :active_all => true)
+
+    @some_assignment = @course.assignments.create!(:title => 'one', :points_possible => 10)
+    subs = @some_assignment.grade_student(@student, {grade: 8, grader: @teacher})
+    subs.each { |s| s.created_at = 3.days.ago; s.updated_at = 3.days.ago; s.save }
+    @some_assignment.grade_student(@student, {excuse: true, grader: @teacher})
+    @days = SubmissionList.days(@course)
+    submissions = @days[0].graders[0].assignments[0].submissions
+    submissions.each do |sub|
+      expect(sub.current_grade).to eq("EX")
+      expect(sub.new_grade).to eq("EX")
+    end
+  end
+
   context "named loops" do
-    
+
     before do
       interesting_submission_data
     end
-    
+
     it "should be able to loop on days" do
       available_keys = [:graders, :date]
       SubmissionList.days(@course).each do |day|
-        day.should be_is_a(OpenStruct)
-        day.hash_data.keys.size.should eql(available_keys.size)
-        available_keys.each {|k| day.hash_data.should be_include(k)}
-        day.graders.should be_is_a(Array)
-        day.date.should be_is_a(Date)
+        expect(day).to be_is_a(OpenStruct)
+        expect(day.send(:table).keys.size).to eql(available_keys.size)
+        available_keys.each {|k| expect(day.send(:table)).to be_include(k)}
+        expect(day.graders).to be_is_a(Array)
+        expect(day.date).to be_is_a(Date)
       end
     end
-    
+
     it "should be able to loop on graders" do
       available_keys = [:grader_id, :assignments, :name]
       SubmissionList.days(@course).each do |day|
         day.graders.each do |grader|
-          grader.should be_is_a(OpenStruct)
-          grader.hash_data.keys.size.should eql(available_keys.size)
-          available_keys.each {|k| grader.hash_data.keys.should be_include(k)}
-          grader.grader_id.should be_is_a(Numeric)
-          grader.assignments.should be_is_a(Array)
-          grader.name.should be_is_a(String)
-          grader.assignments[0].submissions[0].grader.should eql(grader.name)
-          grader.assignments[0].submissions[0].grader_id.should eql(grader.grader_id)
+          expect(grader).to be_is_a(OpenStruct)
+          expect(grader.send(:table).keys.size).to eql(available_keys.size)
+          available_keys.each {|k| expect(grader.send(:table).keys).to be_include(k)}
+          expect(grader.grader_id).to be_is_a(Numeric)
+          expect(grader.assignments).to be_is_a(Array)
+          expect(grader.name).to be_is_a(String)
+          expect(grader.assignments[0].submissions[0].grader).to eql(grader.name)
+          expect(grader.assignments[0].submissions[0].grader_id).to eql(grader.grader_id)
         end
       end
     end
@@ -78,129 +116,178 @@ describe SubmissionList do
       SubmissionList.days(@course).each do |day|
         day.graders.each do |grader|
           grader.assignments.each do |assignment|
-            assignment.submissions.length.should eql assignment.submissions.map(&:student_name).uniq.length
+            expect(assignment.submissions.length).to eql assignment.submissions.map(&:student_name).uniq.length
           end
         end
       end
     end
-    
+
     it "should be able to loop on assignments" do
       available_keys = [:submission_count, :name, :submissions, :assignment_id]
       SubmissionList.days(@course).each do |day|
         day.graders.each do |grader|
           grader.assignments.each do |assignment|
-            assignment.should be_is_a(OpenStruct)
-            assignment.hash_data.keys.size.should eql(available_keys.size)
-            available_keys.each {|k| assignment.hash_data.keys.should be_include(k)}
-            assignment.submission_count.should eql(assignment.submissions.size)
-            assignment.name.should be_is_a(String)
-            assignment.name.should eql(assignment.submissions[0].assignment_name)
-            assignment.submissions.should be_is_a(Array)
-            assignment.assignment_id.should eql(assignment.submissions[0].assignment_id)
+            expect(assignment).to be_is_a(OpenStruct)
+            expect(assignment.send(:table).keys.size).to eql(available_keys.size)
+            available_keys.each {|k| expect(assignment.send(:table).keys).to be_include(k)}
+            expect(assignment.submission_count).to eql(assignment.submissions.size)
+            expect(assignment.name).to be_is_a(String)
+            expect(assignment.name).to eql(assignment.submissions[0].assignment_name)
+            expect(assignment.submissions).to be_is_a(Array)
+            expect(assignment.assignment_id).to eql(assignment.submissions[0].assignment_id)
           end
         end
       end
     end
-    
-    it "should be able to loop on submissions" do
-      available_keys = [
-        :assignment_id, :assignment_name, :attachment_id, :attachment_ids,
-        :body, :course_id, :created_at, :current_grade, :current_graded_at,
-        :current_grader, :grade_matches_current_submission, :graded_at,
-        :graded_on, :grader, :grader_id, :group_id, :id, :new_grade,
-        :new_graded_at, :new_grader, :previous_grade, :previous_graded_at,
-        :previous_grader, :process_attempts, :processed, :published_grade,
-        :published_score, :safe_grader_id, :score, :student_entered_score,
-        :student_user_id, :submission_id, :student_name, :submission_type,
-        :updated_at, :url, :user_id, :workflow_state
-      ]
-      
-      SubmissionList.days(@course).each do |day|
-        day.graders.each do |grader|
-          grader.assignments.each do |assignment|
-            assignment.submissions.each do |submission|
-              submission.should be_is_a(OpenStruct)
-              submission.hash_data.keys.size.should eql(available_keys.size)
-              available_keys.each {|k| submission.hash_data.keys.should be_include(k)}
+
+    context "submissions" do
+      it "should be able to loop on submissions" do
+        available_keys = [
+          :assignment_id, :assignment_name, :attachment_id, :attachment_ids,
+          :body, :course_id, :created_at, :current_grade, :current_graded_at,
+          :current_grader, :grade_matches_current_submission, :graded_at,
+          :graded_on, :grader, :grader_id, :group_id, :id, :new_grade,
+          :new_graded_at, :new_grader, :previous_grade, :previous_graded_at,
+          :previous_grader, :process_attempts, :processed, :published_grade,
+          :published_score, :safe_grader_id, :score, :student_entered_score,
+          :student_user_id, :submission_id, :student_name, :submission_type,
+          :updated_at, :url, :user_id, :workflow_state
+        ]
+
+        SubmissionList.days(@course).each do |day|
+          day.graders.each do |grader|
+            grader.assignments.each do |assignment|
+              assignment.submissions.each do |submission|
+                expect(submission).to be_is_a(OpenStruct)
+                expect(submission.send(:table).keys.size).to eql(available_keys.size)
+                available_keys.each {|k| expect(submission.send(:table).keys).to be_include(k)}
+              end
             end
           end
         end
       end
+
+      it "sorts submissions alphabetically by student name" do
+        day = SubmissionList.days(@course)[0]
+        submissions = day.graders[0].assignments[0].submissions
+        expect(submissions[0].student_name).to eql('student')
+        expect(submissions[1].student_name).to eql('studeñt')
+        expect(submissions[2].student_name).to eql('studeЖt')
+      end
     end
-  
   end
 
-  context "real data inspection" do
-    before do
-      course_model
-      sl = SubmissionList.new(@course)
-      @sort_block_for_filtering = sl.send(:sort_block_for_filtering)
-      @sort_block_for_displaying = sl.send(:sort_block_for_displaying)
-      @full_hash_list = YAML.load_file(
-        File.expand_path(
-          File.join(
-            File.dirname(__FILE__),
-            "..", 
-            "fixtures", 
-            "submission_list_full_hash_list.yml"
-          )
-        )
-      )
-      # def sort_block_for_filtering
-      #   lambda{|a, b|
-      #     tier_1 = a[:id] <=> b[:id]
-      #     tier_2 = a[:updated_at] <=> b[:updated_at]
-      #     tier_1 == 0 ? tier_2 : tier_1
-      #   }
-      # end
-      # 
-      # def sort_block_for_displaying
-      #   lambda{|a, b|
-      # 
-      #     first_tier = if b[:graded_at] and a[:graded_at]
-      #       b[:graded_at] <=> a[:graded_at]
-      #     elsif b[:graded_at]
-      #       1
-      #     elsif a[:graded_at]
-      #       -1
-      #     else
-      #       0
-      #     end
-      # 
-      #     second_tier = a[:safe_grader_id] <=> b[:safe_grader_id]
-      #     third_tier = a[:assignment_id] <=> b[:assignment_id]
-      # 
-      #     case first_tier
-      #     when -1
-      #       -1
-      #     when 1
-      #       1
-      #     when 0
-      #       case second_tier
-      #       when -1
-      #         -1
-      #       when 1
-      #         1
-      #       when 0
-      #         third_tier
-      #       end
-      #     end
-      #   }
-      # end
-      
-      
+  context "regrading" do
+    it 'should include regrade events in the final data' do
+      # Figure out how to manually regrade a test piece of data
+      interesting_submission_data
+      @assignment = @course.assignments.create!(title: 'some_assignment')
+      @quiz = Quizzes::Quiz.create!({:context => @course, title: "quiz time", points_possible: 10, assignment_id: @assignment.id, quiz_type: "assignment"})
+      @quiz.workflow_state = 'published'
+      @quiz.quiz_data = [multiple_choice_question_data]
+      @quiz.save!
+      @qs = @quiz.generate_submission(@student)
+
+      @points = 15.0
+
+      @question = stub(:id => 1, :question_data => {:id => 1,
+          :regrade_option => 'full_credit',
+          :points_possible => @points},
+          :quiz_group => nil )
+
+      @question_regrade = stub(:quiz_question  => @question,
+        :regrade_option => "full_credit" )
+
+      @answer = { :question_id => 1, :points => @points, :text => ""}
+
+      @wrapper = Quizzes::QuizRegrader::Answer.new(@answer, @question_regrade)
+      Quizzes::SubmissionGrader.new(@qs).grade_submission
+      @qs.score_before_regrade = 5.0
+      @qs.score = 4.0
+      @qs.attempt = 1
+      @qs.with_versioning(true, &:save!)
+      @qs.save!
+
+      expect(@qs.score_before_regrade).to eq 5.0
+      expect(@qs.score).to eq 4.0
+
+
+      @sl = SubmissionList.days(@course)
+      regrades = []
+      @sl.each do |day|
+        day.graders.each do |grader|
+          grader.assignments.each do |assignment|
+            assignment.submissions.each do |submission|
+              regrades.push submission.score_before_regrade if submission
+            end
+          end
+        end
+      end
+
+      expect(regrades.include?(5.0)).to be_truthy
     end
-    
-    it "should be able to use a desctructive sort" do
-      fhl = @full_hash_list.dup
-      fhl.sort!(&@sort_block_for_displaying)
-      fhl.should_not eql(@full_hash_list)
-    end
-    
-    it "should order by id, then updated_at" do
-    end
-    
   end
+
+  context "remembers the most recent grade change" do
+    let(:grader)  { User.create name: 'some_grader' }
+    let(:student) { User.create name: "some student", workflow_state: "registered" }
+    let(:course)  { Course.create name: "some course", workflow_state: "available" }
+    let(:list)    { SubmissionList.new course }
+
+    let(:assignment) do
+      course.assignments.create title: "some assignment",
+      points_possible: 10,
+      workflow_state: "published"
+    end
+
+    let(:submission) do
+      list.days.first.
+        graders.first.
+        assignments.first.
+        submissions.first
+    end
+
+    let!(:enroll_teacher_and_student) do
+      course.enroll_teacher(grader).accept
+      course.enroll_student student
+    end
+
+    context "when the grade is not blank" do
+      let!(:grade_assignment) do
+        assignment.grade_student student, {grade: 5, grader: grader}
+        assignment.grade_student student, {grade: 3, grader: grader}
+      end
+
+      it "remembers the 'Before' grade " do
+        expect(submission.previous_grade).to eq "5"
+      end
+      it "remembers the 'After' grade" do
+        expect(submission.new_grade).to eq "3"
+      end
+      it "remembers the 'Current' grade" do
+        expect(submission.current_grade).to eq "3"
+      end
+    end
+
+    context "when the grade is blank" do
+      let!(:grade_assignment) do
+        assignment.grade_student student, {grade: 6, grader: grader}
+        assignment.grade_student student, {grade: 7, grader: grader}
+        assignment.grade_student student, {grade: "", grader: grader}
+      end
+
+      it "remembers the 'Before' grade" do
+       expect(submission.previous_grade).to eq "7"
+      end
+      it "remembers the 'After' grade" do
+       expect(submission.new_grade).to be_blank
+      end
+      it "remembers the 'Current' grade" do
+       expect(submission.current_grade).to be_blank
+      end
+    end
+  end
+
 end
 
 def interesting_submission_list(opts={})
@@ -215,10 +302,10 @@ def interesting_submission_data(opts={})
   opts[:course] ||= {}
   opts[:assignment] ||= {}
   opts[:submission] ||= {}
-  
+
   @grader = user_model({:name => 'some_grader'}.merge(opts[:grader]))
   @grader2 = user_model({:name => 'another_grader'}.merge(opts[:grader]))
-  @student = factory_with_protected_attributes(User, {:name => "some student", :workflow_state => "registered"}.merge(opts[:user]))
+  @student = factory_with_protected_attributes(User, {:name => "studeñt", :workflow_state => "registered"}.merge(opts[:user]))
   @course = factory_with_protected_attributes(Course, {:name => "some course", :workflow_state => "available"}.merge(opts[:course]))
   [@grader, @grader2].each do |grader|
     e = @course.enroll_teacher(grader)
@@ -226,7 +313,7 @@ def interesting_submission_data(opts={})
   end
   @course.enroll_student(@student)
   @assignment = @course.assignments.new({
-    :title => "some assignment", 
+    :title => "some assignment",
     :points_possible => 10
   }.merge(opts[:assignment]))
   @assignment.workflow_state = "published"
@@ -234,16 +321,16 @@ def interesting_submission_data(opts={})
   @assignment.grade_student(@student, {:grade => 1.5, :grader => @grader}.merge(opts[:submission]))
   @assignment.grade_student(@student, {:grade => 3, :grader => @grader}.merge(opts[:submission]))
   @assignment.grade_student(@student, {:grade => 5, :grader => @grader2}.merge(opts[:submission]))
-  @student = user_model(:name => 'another student')
+  @student = user_model(:name => 'studeЖt')
   @course.enroll_student(@student)
   @assignment.reload
   @assignment.grade_student(@student, {:grade => 8, :grader => @grader}.merge(opts[:submission]))
-  @student = user_model(:name => 'smart student')
+  @student = user_model(:name => 'student')
   @course.enroll_student(@student)
   @assignment.reload
   @assignment.grade_student(@student, {:grade => 10, :grader => @grader}.merge(opts[:submission]))
   @assignment = @course.assignments.create({
-    :title => "another assignment", 
+    :title => "another assignment",
     :points_possible => 10
   })
   @assignment.workflow_state = "published"

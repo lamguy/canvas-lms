@@ -1,4 +1,6 @@
-class RemoveUnusedSisDataFields < ActiveRecord::Migration
+class RemoveUnusedSisDataFields < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     remove_column :pseudonyms, :sis_update_data
     remove_column :enrollment_terms, :sis_data

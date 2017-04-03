@@ -1,20 +1,22 @@
-class ContextToConversationNotificationPreferences < ActiveRecord::Migration
+class ContextToConversationNotificationPreferences < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
-    if message = Notification.find_by_category_and_name("Message", "Teacher Context Message")
-      if conversation_message = Notification.find_by_category("Conversation Message")
+    if message = Notification.where(category: "Message", name: "Teacher Context Message").first
+      if conversation_message = Notification.where(category: "Conversation Message").first
         execute <<-SQL
-          INSERT INTO notification_policies
+          INSERT INTO #{NotificationPolicy.quoted_table_name}
             (notification_id, user_id, communication_channel_id, broadcast, frequency)
             SELECT #{conversation_message.id}, user_id, communication_channel_id, broadcast, frequency
-              FROM notification_policies WHERE notification_id=#{message.id};
+              FROM #{NotificationPolicy.quoted_table_name} WHERE notification_id=#{message.id};
         SQL
       end
-      if added_to_conversation = Notification.find_by_category("Added To Conversation")
+      if added_to_conversation = Notification.where(category: "Added To Conversation").first
         execute <<-SQL
-          INSERT INTO notification_policies
+          INSERT INTO #{NotificationPolicy.quoted_table_name}
             (notification_id, user_id, communication_channel_id, broadcast, frequency)
             SELECT #{added_to_conversation.id}, user_id, communication_channel_id, broadcast, frequency
-              FROM notification_policies WHERE notification_id=#{message.id}
+              FROM #{NotificationPolicy.quoted_table_name} WHERE notification_id=#{message.id}
         SQL
       end
     end

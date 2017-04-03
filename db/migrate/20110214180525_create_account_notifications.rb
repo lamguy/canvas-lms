@@ -1,4 +1,6 @@
-class CreateAccountNotifications < ActiveRecord::Migration
+class CreateAccountNotifications < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     create_table :account_notifications do |t|
       t.string :subject
@@ -8,7 +10,7 @@ class CreateAccountNotifications < ActiveRecord::Migration
       t.integer :user_id, :limit => 8
       t.datetime :start_at
       t.datetime :end_at
-      t.timestamps
+      t.timestamps null: true
     end
     add_index :account_notifications, [:account_id, :start_at]
   end

@@ -1,4 +1,6 @@
-class AddContentExport < ActiveRecord::Migration
+class AddContentExport < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     create_table :content_exports do |t|
       t.integer :user_id, :limit => 8
@@ -8,7 +10,7 @@ class AddContentExport < ActiveRecord::Migration
       t.text :settings
       t.float :progress
       t.string :workflow_state
-      t.timestamps
+      t.timestamps null: true
     end
     add_index :content_exports, [:course_id]
     add_index :content_exports, [:user_id]

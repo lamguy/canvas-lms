@@ -19,18 +19,34 @@
 class DiscussionEntryParticipant < ActiveRecord::Base
   include Workflow
 
-  # Be more restrictive if this is ever updatable from user params
-  attr_accessible :discussion_entry, :user, :workflow_state
-
   belongs_to :discussion_entry
   belongs_to :user
 
+  validates_presence_of :discussion_entry_id, :user_id, :workflow_state
+
   def self.read_entry_ids(entry_ids, user)
-    self.connection.select_values(sanitize_sql_array ["SELECT discussion_entry_id FROM #{connection.quote_table_name(table_name)} WHERE user_id = ? AND discussion_entry_id IN (?) AND workflow_state = ?", user.id, entry_ids, 'read']).map(&:to_i)
+    self.where(:user_id => user, :discussion_entry_id => entry_ids, :workflow_state => 'read').
+      pluck(:discussion_entry_id)
+  end
+
+  def self.forced_read_state_entry_ids(entry_ids, user)
+    self.where(:user_id => user, :discussion_entry_id => entry_ids, :forced_read_state => true).
+      pluck(:discussion_entry_id)
+  end
+
+  def self.entry_ratings(entry_ids, user)
+    ratings = self.where(:user_id => user, :discussion_entry_id => entry_ids).where('rating IS NOT NULL')
+    Hash[ratings.map{|x| [x.discussion_entry_id, x.rating]}]
   end
 
   workflow do
     state :unread
     state :read
   end
+
+  scope :read, -> { where(:workflow_state => 'read') }
+  scope :existing_participants, ->(user, entry_id) {
+    select([:id, :discussion_entry_id]).
+      where(user_id: user, discussion_entry_id: entry_id)
+  }
 end

@@ -15,176 +15,152 @@
 # You should have received a copy of the GNU Affero General Public License along
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
-
-# @API Pages
-#
-# Pages are rich content associated with Courses and Groups in Canvas.
-# The Pages API allows this content to be enumerated and retrieved.
-#
-# @object Page
-#     {
-#       // the unique locator for the page
-#       url: "my-page-title",
-#
-#       // the title of the page
-#       title: "My Page Title",
-#
-#       // the creation date for the page
-#       created_at: "2012-08-06T16:46:33-06:00",
-#
-#       // the date the page was last updated
-#       updated_at: "2012-08-08T14:25:20-06:00",
-#
-#       // whether this page is hidden from students
-#       // (note: students will never see this true; pages hidden from them will be omitted from results)
-#       hide_from_students: false,
-#
-#       // the page content, in HTML
-#       // (present when requesting a single page; omitted when listing pages)
-#       body: "<p>Page Content</p>"
-#     }
 class WikiPagesController < ApplicationController
-  before_filter :require_context
-  before_filter :get_wiki_page, :except => [:index, :api_index, :api_show]
-  add_crumb(proc { t '#crumbs.wiki_pages', "Pages"}) { |c| c.send :named_context_url, c.instance_variable_get("@context"), :context_wiki_pages_url }
-  before_filter { |c| c.active_tab = "pages" }
-
   include Api::V1::WikiPage
+  include KalturaHelper
+  include SubmittableHelper
 
-  def show
-    if @page.deleted? && !@page.grants_right?(@current_user, session, :update) && @page.url != 'front-page'
-      flash[:notice] = t('notices.page_deleted', 'The page "%{title}" has been deleted.', :title => @page.title)
-      redirect_to named_context_url(@context, :context_wiki_page_url, 'front-page')
-      return
+  before_action :require_context
+  before_action :get_wiki_page, :except => [:front_page]
+  before_action :set_front_page, :only => [:front_page]
+  before_action :set_pandapub_read_token
+  before_action :set_js_rights
+  before_action :set_js_wiki_data
+  before_action :rich_content_service_config, only: [:edit, :index]
+
+  add_crumb(proc { t '#crumbs.wiki_pages', "Pages"}) do |c|
+    context = c.instance_variable_get('@context')
+    current_user = c.instance_variable_get('@current_user')
+    if context.grants_right?(current_user, :read)
+      c.send :polymorphic_path, [context, :wiki_pages]
     end
-    if @context.try_rescue(:wiki_is_public) || is_authorized_action?(@page, @current_user, :read)
-      add_crumb(@page.title)
-      update_view_count(@page)
-      respond_to do |format|
-        format.html {render :action => "show" }
-        format.json {render :json => @page.to_json }
+  end
+  before_action { |c| c.active_tab = "pages" }
+
+  def js_rights
+    [:wiki, :page]
+  end
+
+  def set_pandapub_read_token
+    if @page && @page.grants_right?(@current_user, session, :read)
+      if CanvasPandaPub.enabled?
+        channel = "/private/wiki_page/#{@page.global_id}/update"
+        js_env :WIKI_PAGE_PANDAPUB => {
+          :CHANNEL => channel,
+          :TOKEN => CanvasPandaPub.generate_token(channel, true)
+        }
       end
+    end
+  end
+
+  def set_front_page
+    @wiki = @context.wiki
+    @page = @wiki.front_page
+  end
+
+  def front_page
+    return unless authorized_action(@context.wiki, @current_user, :read) && tab_enabled?(@context.class::TAB_PAGES)
+
+    if @page && !@page.new_record?
+      wiki_page_jsenv(@context)
+      @padless = true
+      render template: 'wiki_pages/show'
     else
-      render_unauthorized_action(@page)
+      redirect_to polymorphic_url([@context, :wiki_pages])
     end
   end
 
   def index
-    return unless tab_enabled?(@context.class::TAB_PAGES)
-    redirect_to named_context_url(@context, :context_wiki_page_url, 'front-page')
-  end
-
-  # @API List pages
-  #
-  # Lists the wiki pages associated with a course or group.
-  #
-  # @example_request
-  #     curl -H 'Authorization: Bearer <token>' \ 
-  #          https://<canvas>/api/v1/courses/123/pages
-  #
-  # @returns [Page]
-  def api_index
-    if authorized_action(@context.wiki.wiki_pages.new, @current_user, :read)
-      pages_route = polymorphic_url([:api_v1, @context, :pages])
-      scope = @context.wiki.wiki_pages.active.order_by_id
-      view_hidden = is_authorized_action?(@context.wiki.wiki_pages.new(:hide_from_students => true), @current_user, :read)
-      scope = scope.visible_to_students unless view_hidden
-      wiki_pages = Api.paginate(scope, self, pages_route)
-      render :json => wiki_pages_json(wiki_pages, @current_user, session)
+    if authorized_action(@context.wiki, @current_user, :read) && tab_enabled?(@context.class::TAB_PAGES)
+      log_asset_access([ "pages", @context ], "pages", "other")
+      js_env ConditionalRelease::Service.env_for @context
+      js_env :wiki_page_menu_tools => external_tools_display_hashes(:wiki_page_menu)
+      set_tutorial_js_env
+      @padless = true
     end
   end
 
-  # @API Show page
-  #
-  # Retrieves the content of a wiki page.
-  #
-  # @argument url the unique identifier for a page.  Use 'front-page' to retrieve the front page of the wiki.
-  #
-  # @example_request
-  #     curl -H 'Authorization: Bearer <token>' \ 
-  #          https://<canvas>/api/v1/courses/123/pages/front-page
-  #
-  # @returns Page
-  def api_show
-    # not using get_wiki_page since this API is read-only for now
-    @wiki = @context.wiki
-    @page = @wiki.wiki_pages.active.find_by_url!(params[:url])
-    if @context.try_rescue(:wiki_is_public) || authorized_action(@page, @current_user, :read)
-      update_view_count(@page)
-      render :json => wiki_page_json(@page, @current_user, session)
-    end
-  end
-
-  def update
-    if authorized_action(@page, @current_user, :update_content)
-      unless @page.grants_right?(@current_user, session, :update)
-        params[:wiki_page] = {:body => params[:wiki_page][:body], :title => params[:wiki_page][:title]}
-      end
-      @page.workflow_state = 'active' if @page.deleted?
-      if @page.update_attributes(params[:wiki_page].merge(:user_id => @current_user.id))
-        log_asset_access(@page, "wiki", @wiki, 'participate')
-        @page.context_module_action(@current_user, @context, :contributed)
-        flash[:notice] = t('notices.page_updated', 'Page was successfully updated.')
-        respond_to do |format|
-          format.html { return_to(params[:return_to], context_wiki_page_url(:edit => params[:action] == 'create')) }
-          format.json {
-            json = @page.as_json
-            json[:success_url] = context_wiki_page_url(:edit => params[:action] == 'create')
-            render :json => json
-          }
-        end
+  def show
+    if @page.new_record?
+      if @page.grants_any_right?(@current_user, session, :update, :update_content)
+        flash[:info] = t('notices.create_non_existent_page', 'The page "%{title}" does not exist, but you can create it below', :title => @page.title)
+        encoded_name = @page_name && CGI.escape(@page_name).gsub("+", " ")
+        redirect_to polymorphic_url([@context, :wiki_page], id: encoded_name || @page, titleize: params[:titleize], action: :edit)
       else
-        respond_to do |format|
-          format.html { render :action => "show" }
-          format.json { render :json => @page.errors.to_json, :status => :bad_request }
+        wiki_page = @wiki.wiki_pages.deleted_last.where(url: @page.url).first
+        if wiki_page && wiki_page.deleted?
+          flash[:warning] = t('notices.page_deleted', 'The page "%{title}" has been deleted.', :title => @page.title)
+        else
+          flash[:warning] = t('notices.page_does_not_exist', 'The page "%{title}" does not exist.', :title => @page.title)
         end
+        redirect_to polymorphic_url([@context, :wiki_pages])
       end
+      return
     end
-  end
-  
-  def create
-    update
-  end
-  
-  def destroy
-    if authorized_action(@page, @current_user, :delete)
-      if @page.url != "front-page"
-        flash[:notice] = t('notices.page_deleted', 'The page "%{title}" has been deleted.', :title => @page.title)
-        @page.workflow_state = 'deleted'
-        @page.save
-        respond_to do |format|
-          format.html { redirect_to(named_context_url(@context, :context_wiki_pages_url)) }
-        end
-      else #they dont have permissions to destroy this page
-        respond_to do |format|
-          format.html { 
-            flash[:error] = t('errors.permission_denied', 'You are not permitted to delete that page.')
-            redirect_to(named_context_url(@context, :context_wiki_pages_url))
-          }
-        end
+
+    if authorized_action(@page, @current_user, :read)
+      if !@context.feature_enabled?(:conditional_release) || enforce_assignment_visible(@page)
+        add_crumb(@page.title)
+        log_asset_access(@page, 'wiki', @wiki)
+        wiki_page_jsenv(@context)
+        set_master_course_js_env_data(@page, @context)
+        @mark_done = MarkDonePresenter.new(self, @context, params["module_item_id"], @current_user, @page)
+        @padless = true
       end
     end
   end
 
-  protected
+  def edit
+    if @page.grants_any_right?(@current_user, session, :update, :update_content)
+      return render_unauthorized_action if editing_restricted?(@page)
+      set_master_course_js_env_data(@page, @context)
 
-  def context_wiki_page_url(opts={})
-    page_name = @page.url
-    res = named_context_url(@context, :context_wiki_page_url, page_name)
-    if opts && opts[:edit]
-      res += "#edit"
-    end
-   res
-  end
-
-  def update_view_count(page)
-    unless page.new_record?
-      page.with_versioning(false) do |p|
-        p.context_module_action(@current_user, @context, :read)
-        WikiPage.connection.execute("UPDATE wiki_pages SET view_count=COALESCE(view_count, 0) + 1 WHERE id=#{p.id}")
+      js_env ConditionalRelease::Service.env_for @context
+      if !ConditionalRelease::Service.enabled_in_context?(@context) ||
+        enforce_assignment_visible(@page)
+        add_crumb(@page.title)
+        @padless = true
       end
-      log_asset_access(page, "wiki", @wiki)
+    else
+      if authorized_action(@page, @current_user, :read)
+        flash[:warning] = t('notices.cannot_edit', 'You are not allowed to edit the page "%{title}".', :title => @page.title)
+        redirect_to polymorphic_url([@context, @page])
+      end
     end
   end
- 
+
+  def revisions
+    if @page.grants_right?(@current_user, session, :read_revisions)
+      if !@context.feature_enabled?(:conditional_release) || enforce_assignment_visible(@page)
+        add_crumb(@page.title, polymorphic_url([@context, @page]))
+        add_crumb(t("#crumbs.revisions", "Revisions"))
+
+        @padless = true
+      end
+    else
+      if authorized_action(@page, @current_user, :read)
+        flash[:warning] = t('notices.cannot_read_revisions', 'You are not allowed to review the historical revisions of "%{title}".', :title => @page.title)
+        redirect_to polymorphic_url([@context, @page])
+      end
+    end
+  end
+
+  def show_redirect
+    redirect_to polymorphic_url([@context, @page], :titleize => params[:titleize],
+                                :module_item_id => params[:module_item_id]), status: :moved_permanently
+  end
+
+  def revisions_redirect
+    redirect_to polymorphic_url([@context, @page, :revisions]), status: :moved_permanently
+  end
+
+  private
+  def rich_content_service_config
+    rce_js_env(:sidebar)
+  end
+
+  def wiki_page_jsenv(context)
+    js_env :wiki_page_menu_tools => external_tools_display_hashes(:wiki_page_menu)
+    js_env :DISPLAY_SHOW_ALL_LINK => tab_enabled?(context.class::TAB_PAGES, {no_render: true})
+  end
 end

@@ -23,9 +23,9 @@ describe 'FixUserConversationsCountsForAll' do
   describe "up" do
     it "should fix incorrect entries and correctly count already correct entries" do
       # Setup user with correct unread_conversations_count (2 unread convos)
-      u1 = user
+      u1 = user_factory
       2.times do
-        c = u1.initiate_conversation([u1.id], false)
+        c = u1.initiate_conversation([u1], false)
         c.add_message('Hello')
         c.add_message('Hello again')
         c.update_attribute(:workflow_state, 'unread')
@@ -33,9 +33,9 @@ describe 'FixUserConversationsCountsForAll' do
       # unread_conversations_count == 2
 
       # Setup user with wrong unread_conversations_count (negative)
-      u2 = user
+      u2 = user_factory
       1.times do
-        c = u2.initiate_conversation([u2.id], false)
+        c = u2.initiate_conversation([u2], false)
         c.add_message('Hello')
         c.add_message('Hello again')
         c.update_attribute(:workflow_state, 'unread')
@@ -44,9 +44,9 @@ describe 'FixUserConversationsCountsForAll' do
       u2.update_attribute(:unread_conversations_count, -3)
 
       # Setup user with wrong unread_conversations_count (too many)
-      u3 = user
+      u3 = user_factory
       3.times do
-        c = u3.initiate_conversation([u3.id], false)
+        c = u3.initiate_conversation([u3], false)
         c.add_message('Hello')
         c.add_message('Hello again')
         c.update_attribute(:workflow_state, 'unread')
@@ -56,22 +56,22 @@ describe 'FixUserConversationsCountsForAll' do
 
       FixUserConversationsCountsForAll.up
 
-      u1.reload.unread_conversations_count.should == 2
-      u2.reload.unread_conversations_count.should == 1
-      u3.reload.unread_conversations_count.should == 3
+      expect(u1.reload.unread_conversations_count).to eq 2
+      expect(u2.reload.unread_conversations_count).to eq 1
+      expect(u3.reload.unread_conversations_count).to eq 3
     end
 
     it "should not count deleted entries" do
       # Setup user with some deleted conversations
-      u1 = user
+      u1 = user_factory
       2.times do
-        c = u1.initiate_conversation([u1.id], false)
+        c = u1.initiate_conversation([u1], false)
         c.add_message('Hello')
         c.add_message('Hello again')
         c.update_attribute(:workflow_state, 'unread')
       end
       1.times do
-        c = u1.initiate_conversation([u1.id], false)
+        c = u1.initiate_conversation([u1], false)
         c.add_message('Deleted myself')
         c.add_message('Empty yo')
         c.update_attribute(:workflow_state, 'unread')
@@ -80,9 +80,9 @@ describe 'FixUserConversationsCountsForAll' do
       # unread_conversations_count == 2
 
       # Setup user with only deleted conversations (should have count 0)
-      u2 = user
+      u2 = user_factory
       3.times do
-        c = u2.initiate_conversation([u2.id], false)
+        c = u2.initiate_conversation([u2], false)
         c.add_message('Hello')
         c.add_message('Hello again')
         c.update_attribute(:workflow_state, 'unread')
@@ -92,8 +92,8 @@ describe 'FixUserConversationsCountsForAll' do
 
       FixUserConversationsCountsForAll.up
 
-      u1.reload.unread_conversations_count.should == 2
-      u2.reload.unread_conversations_count.should == 0
+      expect(u1.reload.unread_conversations_count).to eq 2
+      expect(u2.reload.unread_conversations_count).to eq 0
     end
   end
 end

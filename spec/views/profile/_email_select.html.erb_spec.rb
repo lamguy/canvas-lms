@@ -24,10 +24,10 @@ describe "/profile/_email_select" do
     course_with_student
     view_context
     cc = @user.communication_channels.create!(:path => 'user@example.com')
-    assigns[:email_channels] = [cc]
+    assign(:email_channels, [cc])
 
     render :partial => "profile/email_select", :object => cc
-    response.should_not be_nil
+    expect(response).not_to be_nil
   end
 end
 

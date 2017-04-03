@@ -1,6 +1,13 @@
 External Tool Link Selector
 ============================
 
+<a name="top"></a>
+<div class="warning-message">The methods outlined here use resource selection, which is deprecated.
+<p></p>
+See the <a href="content_item.html">Content Item</a> documentation to design a tool that
+can add content to the RCE in a way that conforms with the most up to date
+<a href="http://www.imsglobal.org/lti/">IMS LTI standard</a>. </div>
+
 An extension to standard LTI, external tools can be configured 
 to allow selecting custom links to be 
 added to modules or used for external tool assignments. When a tool is 
@@ -19,7 +26,7 @@ the these type of tools as domain-matching tool and only return URLs
 whose domain matches the tool's specified domain.
 
 When tools are loaded as link selectors, Canvas sends an additional 
-parameter to notify the tool of the directive, "selection_directive=select_link". 
+parameter to notify the tool of the directive, `ext_content_return_types=select_link`.
 When a tool receives this directive, it means Canvas is expecting the 
 tool to redirect the user to the LTI success URL with some specific 
 additional parameters. These additional parameters tell Canvas what 
@@ -30,34 +37,33 @@ values such as url.
 ### to embed an lti link:
 <table class="tool">
   <tr>
-    <td>embed_type=basic_lti</td>
+    <td>return_type=lti_launch_url</td>
     <td></td>
     <td>(required)</td>
   </tr><tr>
     <td>url=&lt;url&gt;</td>
     <td>this is URL that will be used to load the external tool</td>
     <td>(required)</td>
+      </tr><tr>
+        <td>text=&lt;text&gt;</td>
+        <td>this is the suggested text for the inserted link. Highlighted content will be overwritten by this value.</td>
+        <td>(required)</td>
+      </tr>
   </tr><tr>
     <td>title=&lt;text&gt;</td>
     <td>this is used as the 'title' attribute of the inserted external tool link</td>
     <td>(optional)</td>
-  </tr><tr>
-    <td>text=&lt;text&gt;</td>
-    <td>this is the suggested text for the inserted link. If the user has already selected some content before opening this dialog, the link will wrap that content and this value will be ignored.</td>
-    <td>(optional, defaults to 'link')</td>
-  </tr>
 </table>
 
 #### examples:
-If the <code>launch_presentation_return_url</code> were
+If the `launch_presentation_return_url` were
 <code>http://www.example.com/done</code>, possible return URLs could include:
 
-- http://www.example.com/done?embed_type=basic_lti&url=https%3A%2F%2Fothersite.com%2Flti_link
-- http://www.example.com/done?embed_type=basic_lti&url=https%3A%2F%2Fothersite.com%2Flti_link&text=other+site+link
-- http://www.example.com/done?embed_type=basic_lti&url=https%3A%2F%2Fothersite.com%2Flti_link&title=link
+- http://www.example.com/done?return_type=lti_launch_url&url=https%3A%2F%2Fothersite.com%2Flti_link&text=Link+Text
+- http://www.example.com/done?return_type=lti_launch_url&url=https%3A%2F%2Fothersite.com%2Flti_link&title=link_title&text=Link+Text
 
 ## Settings
-All of these settings are contained under "resource_selection"
+All of these settings are configurable for the "resource_selection" placement in the tool configuration
 
 -   url: &lt;url&gt; (optional)
     

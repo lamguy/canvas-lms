@@ -1,14 +1,12 @@
 <% content_for :page_title do %><%= t(:page_title, "Attendance for %{user}", :user => @user.name) %><% end %>
 
 <% content_for :right_side do %>
-  <div class='rs-margin-all'>
-    <% if can_do(@enrollment, @current_user, :read_grades) %>
-      <a class="button button-sidebar-wide" href="<%= context_url(@context, :context_student_grades_url, @user.id) %>"><%= image_tag "grading_icon.png" %> <%= t('links.grades', "Grades for %{user}", :user => context_user_name(@context, @user)) %></a>
-    <% end %>
-    <% if can_do(@context, @current_user, :send_messages) %>
-      <a class="button button-sidebar-wide" href="<%= message_user_path(@user) %>"><%= image_tag "email.png" %> <%= t('links.message_user', "Message %{user}", :user => context_user_name(@context, @user)) %></a>
-    <% end %>
-  </div>
+  <% if can_do(@enrollment, @current_user, :read_grades) %>
+    <a class="btn button-sidebar-wide" href="<%= context_url(@context, :context_student_grades_url, @user.id) %>"><%= image_tag "grading_icon.png", :alt => '' %> <%= t('links.grades', "Grades for %{user}", :user => context_user_name(@context, @user)) %></a>
+  <% end %>
+  <% if can_do(@context, @current_user, :send_messages) %>
+    <a class="btn button-sidebar-wide" href="<%= message_user_path(@user) %>"><%= image_tag "email.png", :alt => '' %> <%= t('links.message_user', "Message %{user}", :user => context_user_name(@context, @user)) %></a>
+  <% end %>
 <% end %>
 <% if @assignments.empty? %>
   <div style="margin-left: 20px;">
@@ -55,26 +53,6 @@
     <% end %>
     </tbody>
   </table>
-  <% js_block do %>
-  <script>
-  require([
-    'jquery' /* $ */,
-    'jquery.instructure_misc_helpers' /* /\.detect/ */,
-    'jquery.instructure_misc_plugins' /* fragmentChange */,
-    'vendor/jquery.scrollTo' /* /\.scrollTo/ */
-  ], function($) {
-    $(document).ready(function() {
-      $(document).fragmentChange(function(event, hash) {
-        $("#student_attendance tr.highlighted").removeClass('highlighted');
-        if(hash.indexOf("#assignment_") == 0) {
-          var $tr = $("#" + hash.substring(1)).parents("tr");
-          $tr.addClass('highlighted');
-          $("html,body").scrollTo($tr);
-        }
-      });
-    });
-  });
-  </script>
-  <% end %>
-  <% jammit_css :attendance %>
+  <% js_bundle 'legacy/gradebooks_student_attendance' %>
+  <% css_bundle :attendance %>
 <% end %>

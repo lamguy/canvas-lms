@@ -36,8 +36,13 @@ class WimbaConference < WebConference
         end
         if date_info = data[:longname].match(Regexp.new(" - (\\d{2}/\\d{2}/\\d{4} \\d{2}:\\d{2})\\z"))
           # convert from wimba's local time to the user's local time
-          tz = ActiveSupport::TimeZone[config[:timezone] || config[:plugin].default_settings[:timezone]]
-          new_date = datetime_string(tz.parse(date_info[1]))
+          tz       = ActiveSupport::TimeZone[config[:timezone] || config[:plugin].default_settings[:timezone]]
+          new_date = nil
+
+          Time.use_zone(tz) do
+            new_date = datetime_string(DateTime.strptime(date_info[1], '%m/%d/%Y %H:%M'))
+          end
+
           data[:longname].sub!(date_info[1], new_date)
         end
         urls << {:id => data[:class_id], :name => data[:longname]} unless url_id && data[:class_id] != url_id
@@ -53,7 +58,7 @@ class WimbaConference < WebConference
 
   def craft_api_url(action, opts={})
     url = "http://#{server}/admin/api/api.pl"
-    query_string = "function=#{action.to_s}"
+    query_string = "function=#{action}"
     opts.each do |key, val|
       query_string += "&#{CGI::escape(key)}=#{CGI::escape(val.to_s)}"
     end
@@ -79,19 +84,21 @@ class WimbaConference < WebConference
     res = nil
     # TODO: rework this so that we reuse the same tcp conn (we may call
     # send_request multiple times in the course of one browser request).
-    Net::HTTP.start(uri.host, uri.port) do |http|
-      http.read_timeout = 10
-      5.times do # follow redirects, but not forever
-        logger.debug "wimba api call: #{uri.path}?#{uri.query}"
-        res = http.request_get("#{uri.path}?#{uri.query}", headers)
-        if res['Set-Cookie'] && res['Set-Cookie'] =~ /AuthCookieHandler_Horizon=.*;/
-          @auth_cookie = headers['Cookie'] = res['Set-Cookie'].sub(/.*(AuthCookieHandler_Horizon=.*?);.*/, '\\1')
-        end
-        if res.is_a?(Net::HTTPRedirection)
-          url = res['location']
-          uri = URI.parse(url)
-        else
-          break
+    Canvas.timeout_protection("wimba") do
+      Net::HTTP.start(uri.host, uri.port) do |http|
+        http.read_timeout = 10
+        5.times do # follow redirects, but not forever
+          logger.debug "wimba api call: #{uri.path}?#{uri.query}"
+          res = http.request_get("#{uri.path}?#{uri.query}", headers)
+          if res['Set-Cookie'] && res['Set-Cookie'] =~ /AuthCookieHandler_Horizon=.*;/
+            @auth_cookie = headers['Cookie'] = res['Set-Cookie'].sub(/.*(AuthCookieHandler_Horizon=.*?);.*/, '\\1')
+          end
+          if res.is_a?(Net::HTTPRedirection)
+            url = res['location']
+            uri = URI.parse(url)
+          else
+            break
+          end
         end
       end
     end
@@ -108,9 +115,6 @@ class WimbaConference < WebConference
       else
         logger.error "wimba http error #{res}"
     end
-    nil
-  rescue Timeout::Error
-    logger.error "wimba timeout error"
     nil
   rescue
     logger.error "wimba unhandled exception #{$!}"

@@ -1,6 +1,8 @@
-class SetBlankSisUserIdsToNull < ActiveRecord::Migration
+class SetBlankSisUserIdsToNull < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
-    Pseudonym.update_all({ :sis_user_id => nil }, :sis_user_id => '')
+    Pseudonym.where(:sis_user_id => '').update_all(:sis_user_id => nil)
   end
 
   def self.down

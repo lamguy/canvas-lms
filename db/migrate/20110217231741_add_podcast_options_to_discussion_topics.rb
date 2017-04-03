@@ -1,4 +1,6 @@
-class AddPodcastOptionsToDiscussionTopics < ActiveRecord::Migration
+class AddPodcastOptionsToDiscussionTopics < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     add_column :discussion_topics, :podcast_enabled, :boolean
     add_column :discussion_topics, :podcast_has_student_posts, :boolean

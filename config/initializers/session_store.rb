@@ -6,38 +6,17 @@
 # no regular words or you'll be exposed to dictionary attacks.
 config = {
   :key           => '_normandy_session',
-  :session_store => :encrypted_cookie_store,
-  :secret        => (Setting.get_or_set("session_secret_key",
-      ActiveSupport::SecureRandom.hex(64)) rescue ActiveSupport::SecureRandom.hex(64))
-}.merge((Setting.from_config("session_store") || {}).symbolize_keys)
+  :secret        => (Setting.get_or_set("session_secret_key", SecureRandom.hex(64)) rescue SecureRandom.hex(64))
+}.merge((ConfigFile.load("session_store") || {}).symbolize_keys)
 
 # :expire_after is the "true" option, and :expires is a legacy option, but is applied
 # to the cookie after :expire_after is, so by setting it to nil, we force the lesser
-# of session expiration or expire_after for stores that have a way to expire sessions
-# outside of the cookie (ActiveRecord::CookieStore+periodic job, MemCacheStore,
-# RedisSessionStore, and EncryptedCookieStore)
+# of session expiration or expire_after
 config[:expire_after] ||= 1.day
 config[:expires] = nil
-session_store = config.delete(:session_store).to_sym
+config[:logger] = Rails.logger
 
-case session_store
-when :mem_cache_store
-  require 'memcache'
-  config[:namespace] ||= config[:key]
-  servers = config[:memcache_servers] || Setting.from_config("memcache") || ['localhost:11211']
-  config[:cache] ||= MemCache.new(servers, config)
-when :redis_session_store
-  Bundler.require 'redis'
-  config[:key_prefix] ||= config[:key]
-  config[:servers] ||= config[:redis_servers] || Setting.from_config("redis")
-end
+Autoextend.hook(:EncryptedCookieStore, :SessionsTimeout)
 
-ActionController::Base.session = config
-ActionController::Base.session_store = session_store
-
-ActionController::Flash::FlashHash.class_eval do
-  def store(session, key = "flash")
-    return session.delete(key) if self.empty?
-    session[key] = self
-  end
-end
+CanvasRails::Application.config.session_store(:encrypted_cookie_store, config)
+CanvasRails::Application.config.secret_token = config[:secret]

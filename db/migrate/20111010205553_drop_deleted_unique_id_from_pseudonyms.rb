@@ -1,16 +1,14 @@
-class DropDeletedUniqueIdFromPseudonyms < ActiveRecord::Migration
+class DropDeletedUniqueIdFromPseudonyms < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
-    Pseudonym.update_all('unique_id=deleted_unique_id', "deleted_unique_id IS NOT NULL AND workflow_state='deleted'")
+    Pseudonym.where("deleted_unique_id IS NOT NULL AND workflow_state='deleted'").update_all('unique_id=deleted_unique_id')
     remove_column :pseudonyms, :deleted_unique_id
   end
 
   def self.down
     add_column :pseudonyms, :deleted_unique_id, :string
-    Pseudonym.update_all('deleted_unique_id=unique_id', "unique_id IS NOT NULL AND workflow_state='deleted'")
-    if Pseudonym.connection.adapter_name == 'MySQL'
-      Pseudonym.update_all("unique_id=unique_id || '--' || SUBSTR(RAND(), 3, 4)", "unique_id IS NOT NULL AND workflow_state='deleted'")
-    else
-      Pseudonym.update_all("unique_id=unique_id || '--' || SUBSTR(CAST(RANDOM() AS varchar), 3, 4)", "unique_id IS NOT NULL AND workflow_state='deleted'")
-    end
+    Pseudonym.where("unique_id IS NOT NULL AND workflow_state='deleted'").update_all('deleted_unique_id=unique_id')
+    Pseudonym.where("unique_id IS NOT NULL AND workflow_state='deleted'").update_all("unique_id=unique_id || '--' || SUBSTR(CAST(RANDOM() AS varchar), 3, 4)")
   end
 end

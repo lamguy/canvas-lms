@@ -16,14 +16,16 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require 'lib/sis/csv/base_importer'
-
 module SIS
   module CSV
-    class UserImporter < BaseImporter
+    class UserImporter < CSVBaseImporter
 
-      def self.is_user_csv?(row)
+      def self.user_csv?(row)
         row.include?('user_id') && row.include?('login_id')
+      end
+
+      def self.identifying_fields
+        %w[user_id].freeze
       end
 
       # expected columns:
@@ -35,7 +37,7 @@ module SIS
             update_progress
 
             begin
-              importer.add_user(row['user_id'], row['login_id'], row['status'], row['first_name'], row['last_name'], row['email'], row['password'], row['ssha_password'])
+              importer.add_user(row['user_id'], row['login_id'], row['status'], row['first_name'], row['last_name'], row['email'], row['password'], row['ssha_password'], row['integration_id'], row['short_name'], row['full_name'], row['sortable_name'], row['authentication_provider_id'])
             rescue ImportError => e
               messages << "#{e}"
             end

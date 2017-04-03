@@ -1,4 +1,6 @@
-class AddUsefulIndexes < ActiveRecord::Migration
+class AddUsefulIndexes < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     add_index :courses, :uuid
     add_index :content_tags, [ :associated_asset_id, :associated_asset_type ], :name => 'index_content_tags_on_associated_asset'

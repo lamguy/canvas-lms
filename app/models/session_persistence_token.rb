@@ -39,14 +39,13 @@ require 'authlogic/crypto_providers/bcrypt'
 class SessionPersistenceToken < ActiveRecord::Base
   belongs_to :pseudonym
 
-  attr_accessible :pseudonym, :crypted_token, :token_salt, :uncrypted_token
   attr_accessor :uncrypted_token
   validates_presence_of :pseudonym_id, :crypted_token, :token_salt
 
   def self.generate(pseudonym)
-    salt = ActiveSupport::SecureRandom.hex(8)
-    token = ActiveSupport::SecureRandom.hex(32)
-    self.create!(:pseudonym => pseudonym,
+    salt = SecureRandom.hex(8)
+    token = SecureRandom.hex(32)
+    pseudonym.session_persistence_tokens.create!(
                  :token_salt => salt,
                  :uncrypted_token => token,
                  :crypted_token => self.hashed_token(salt, token))
@@ -63,7 +62,7 @@ class SessionPersistenceToken < ActiveRecord::Base
   def self.find_by_pseudonym_credentials(creds)
     token_id, persistence_token, uuid = creds.split("::")
     return unless token_id.present? && persistence_token.present? && uuid.present?
-    token = self.find_by_id(token_id)
+    token = self.where(id: token_id).first
     return unless token
     return unless token.valid_token?(persistence_token, uuid)
     return token

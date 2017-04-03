@@ -1,4 +1,6 @@
-class ChangeRubricPointsPossibleToFloat < ActiveRecord::Migration
+class ChangeRubricPointsPossibleToFloat < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     change_column :rubrics, :points_possible, :float
   end

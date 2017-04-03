@@ -1,11 +1,13 @@
-class CreateAppointmentGroupSubContexts < ActiveRecord::Migration
+class CreateAppointmentGroupSubContexts < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     create_table :appointment_group_sub_contexts do |t|
       t.references :appointment_group, :limit => 8
       t.integer :sub_context_id, :limit => 8
       t.string :sub_context_type
       t.string :sub_context_code
-      t.timestamps
+      t.timestamps null: true
     end
 
     add_index :appointment_group_sub_contexts, :id

@@ -24,12 +24,13 @@ describe "/groups/show" do
     course_with_student
     @group = @course.groups.create!(:name => "some group")
     view_context(@group, @user)
-    assigns[:group] = @group
-    assigns[:topics] = []
-    assigns[:upcoming_events] = []
-    assigns[:context] = @group
+    assign(:group, @group)
+    assign(:topics, [])
+    assign(:upcoming_events, [])
+    assign(:context, @group)
+    assign(:stream_items, [])
     render "groups/show"
-    response.should_not be_nil
+    expect(response).not_to be_nil
   end
 end
 

@@ -21,20 +21,22 @@ module CC::Importer::Canvas
     include LearningOutcomesConverter
     include RubricsConverter
     include ModuleConverter
-    
+
     def settings_doc(file, html = false)
       path = File.join(@unzipped_file_path, COURSE_SETTINGS_DIR, file)
-      return nil unless File.exists? path
+      return nil unless File.exist? path
       if html
         open_file path
       else
         open_file_xml path
       end
     end
-    
+
     def convert_all_course_settings
       @course[:course] = convert_course_settings(settings_doc(COURSE_SETTINGS))
-      @course[:course][:syllabus_body] = convert_syllabus(settings_doc(SYLLABUS, true))
+      if doc = settings_doc(SYLLABUS, true)
+        @course[:course][:syllabus_body] = convert_syllabus(doc)
+      end
       @course[:assignment_groups] = convert_assignment_groups(settings_doc(ASSIGNMENT_GROUPS))
       @course[:external_tools] = convert_external_tools(settings_doc(EXTERNAL_TOOLS))
       @course[:external_feeds] = convert_external_feeds(settings_doc(EXTERNAL_FEEDS))
@@ -50,17 +52,20 @@ module CC::Importer::Canvas
       return course unless doc
       course[:migration_id] = get_node_att(doc, 'course',  'identifier')
 
-      ['title', 'course_code', 'hashtag', 'default_wiki_editing_roles',
+      ['title', 'course_code', 'default_wiki_editing_roles',
        'turnitin_comments', 'default_view', 'license', 'locale',
-       'group_weighting_scheme', 'storage_quota', 'grading_standard_identifier_ref'].each do |string_type|
+       'group_weighting_scheme', 'storage_quota', 'grading_standard_identifier_ref',
+       'root_account_uuid', 'image_url', 'image_identifier_ref'].each do |string_type|
         val = get_node_val(doc, string_type)
         course[string_type] = val unless val.nil?
       end
-      ['is_public', 'indexed', 'publish_grades_immediately', 'allow_student_wiki_edits',
+      ['is_public', 'public_syllabus', 'public_syllabus_to_auth', 'indexed', 'allow_student_wiki_edits',
        'allow_student_assignment_edits', 'show_public_context_messages',
-       'allow_student_forum_attachments', 'allow_student_organized_groups',
-       'show_all_discussion_entries', 'open_enrollment', 'allow_wiki_comments',
-       'self_enrollment', 'hide_final_grade', 'grading_standard_enabled'].each do |bool_val|
+       'allow_student_forum_attachments', 'allow_student_organized_groups', 'lock_all_announcements',
+       'open_enrollment', 'allow_wiki_comments',
+       'self_enrollment', 'hide_final_grade', 'grading_standard_enabled',
+       'hide_distribution_graphs', 'allow_student_discussion_topics',
+       'allow_student_discussion_editing', 'show_announcements_on_home_page', 'home_page_announcement_limit'].each do |bool_val|
         val = get_bool_val(doc, bool_val)
         course[bool_val] = val unless val.nil?
       end
@@ -77,9 +82,7 @@ module CC::Importer::Canvas
           # Validate the format a little bit
           # Should be something like [{"id"=>0},{"id"=>5},{"id"=>4}]
           if nav.present? && nav.is_a?(Array)
-            if nav.all?{|i|i.is_a?(Hash) && i["id"]}
-              course[:tab_configuration] = nav.reject{|i|!i["id"].is_a?(Integer)}
-            end
+            course[:tab_configuration] = nav.select{|i| i.is_a?(Hash) && i["id"] }
           end
         rescue
           add_warning(I18n.t('errors.bad_navigation_config', "Invalid course tab configuration"), $!)
@@ -88,7 +91,7 @@ module CC::Importer::Canvas
 
       course
     end
-    
+
     def convert_syllabus(doc)
       get_html_title_and_body(doc).last
     end
@@ -110,10 +113,10 @@ module CC::Importer::Canvas
           rule['assignment_migration_id'] = get_node_val(r_node, 'identifierref')
           group['rules'] << rule
         end
-        
+
         groups << group
       end
-      
+
       groups
     end
 
@@ -129,7 +132,7 @@ module CC::Importer::Canvas
         tool['domain'] = get_node_val(node, 'domain')
         tool['url'] = get_node_val(node, 'url')
         tool['privacy_level'] = get_node_val(node, 'privacy_level')
-        
+
         tools << tool
       end
 
@@ -144,11 +147,9 @@ module CC::Importer::Canvas
         feed['migration_id'] = node['identifier']
         feed['title'] = get_node_val(node, 'title')
         feed['url'] = get_node_val(node, 'url')
-        feed['feed_type'] = get_node_val(node, 'feed_type')
-        feed['purpose'] = get_node_val(node, 'purpose')
         feed['verbosity'] = get_node_val(node, 'verbosity')
         feed['header_match'] = get_node_val(node, 'header_match')
-        
+
         feeds << feed
       end
 

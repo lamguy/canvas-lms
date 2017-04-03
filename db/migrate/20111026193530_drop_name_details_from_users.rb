@@ -1,4 +1,6 @@
-class DropNameDetailsFromUsers < ActiveRecord::Migration
+class DropNameDetailsFromUsers < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     if User.column_names.include?('given_name')
       remove_column :users, :suffix

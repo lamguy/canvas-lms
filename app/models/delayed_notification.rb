@@ -18,14 +18,20 @@
 
 class DelayedNotification < ActiveRecord::Base
   include Workflow
-  belongs_to :asset, :polymorphic => true
-  belongs_to :notification
-  belongs_to :asset_context, :polymorphic => true
-  attr_accessible :asset, :notification, :recipient_keys, :asset_context, :data
+
+  belongs_to :asset, polymorphic:
+    [:assessment_request, :attachment, :content_migration, :content_export, :collaborator, :submission,
+     :assignment, :communication_channel, :calendar_event, :conversation_message, :discussion_entry,
+     :submission_comment, { quiz_submission: 'Quizzes::QuizSubmission' }, :discussion_topic, :course, :enrollment,
+     :wiki_page, :group_membership, :web_conference], polymorphic_prefix: true, exhaustive: false
+  include NotificationPreloader
+  belongs_to :asset_context, polymorphic: [:account, :group, :course]
+
   attr_accessor :data
-  
+  validates_presence_of :notification_id, :asset_id, :asset_type, :workflow_state
+
   serialize :recipient_keys
-  
+
   workflow do
     state :to_be_processed do
       event :do_process, :transitions_to => :processed
@@ -33,13 +39,13 @@ class DelayedNotification < ActiveRecord::Base
     state :processed
     state :errored
   end
-  
+
   def self.process(asset, notification, recipient_keys, asset_context, data)
     dn = DelayedNotification.new(:asset => asset, :notification => notification, :recipient_keys => recipient_keys,
       :asset_context => asset_context, :data => data)
     dn.process
   end
-  
+
   def process
     tos = self.to_list
     if self.asset && !tos.empty?
@@ -48,16 +54,15 @@ class DelayedNotification < ActiveRecord::Base
     self.do_process unless self.new_record?
     res
   rescue => e
-    ErrorReport.log_exception(:default, e, {
-      :message => "Delayed Notification processing failed",
-    })
+    Canvas::Errors.capture(e, message: "Delayed Notification processing failed")
     logger.error "delayed notification processing failed: #{e.message}\n#{e.backtrace.join "\n"}"
     self.workflow_state = 'errored'
     self.save
     []
   end
-  
+
   def to_list
+    return @to_list if @to_list
     lookups = {}
     (recipient_keys || []).each do |key|
       pieces = key.split('_')
@@ -70,13 +75,12 @@ class DelayedNotification < ActiveRecord::Base
     lookups.each do |klass, ids|
       includes = []
       includes = [:user] if klass == CommunicationChannel
-      res += klass.find(:all, :conditions => {:id => ids}, :include => includes) rescue []
+      res += klass.where(:id => ids).preload(includes).to_a rescue []
     end
-    res.uniq
+    @to_list = res.uniq
   end
-  memoize :to_list
-  
-  named_scope :to_be_processed, lambda {|limit|
-    {:conditions => ['delayed_notifications.workflow_state = ?', 'to_be_processed'], :limit => limit, :order => 'delayed_notifications.created_at'}
+
+  scope :to_be_processed, lambda { |limit|
+    where(:workflow_state => 'to_be_processed').limit(limit).order("delayed_notifications.created_at")
   }
 end

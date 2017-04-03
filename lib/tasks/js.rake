@@ -1,107 +1,60 @@
+require 'json'
+
 namespace :js do
 
-  desc 'test javascript specs with PhantomJS'
-  task :test do
-    quick = ENV["quick"] && ENV["quick"] == "true"
-    unless quick
-      puts "--> do rake js:test quick=true to skip generating compiled coffeescript and handlebars."
-      Rake::Task['js:generate'].invoke
-    end
-    puts "--> executing phantomjs tests"
+  desc "Build client_apps"
+  task :build_client_apps do
+    require 'config/initializers/client_app_symlinks'
 
-    require 'canvas/require_js'
-    require 'erubis'
-    output = Erubis::Eruby.new(File.read("#{Rails.root}/spec/javascripts/runner.html.erb")).
-      result(Canvas::RequireJs.get_binding)
-    File.open("#{Rails.root}/spec/javascripts/runner.html", 'w') { |f| f.write(output) }
+    Dir.glob('./client_apps/*/').each do |app_dir|
+      app_name = File.basename(app_dir)
 
-    phantomjs_output = `phantomjs spec/javascripts/support/qunit/test.js file:///#{Dir.pwd}/spec/javascripts/runner.html`
-    exit_status = $?.exitstatus
-    puts phantomjs_output
-    raise "PhantomJS tests failed" if exit_status != 0
-  end
+      Dir.chdir(app_dir) do
+        puts "Building client app '#{app_name}'"
 
-  def coffee_destination(dir_or_file)
-    dir_or_file.sub('app/coffeescripts', 'public/javascripts/compiled').
-                sub('spec/coffeescripts', 'spec/javascripts').
-                sub(%r{/javascripts/compiled/plugins/([^/]+)(/|$)}, '/plugins/\\1/javascripts/compiled\\2')
-  end
-
-  def compile_coffeescript(coffee_file)
-    destination = coffee_destination(coffee_file).sub(%r{\.coffee$}, '.js')
-    FileUtils.mkdir_p(File.dirname(destination))
-    File.open(destination, 'wb') do |out|
-      out.write CoffeeScript.compile(File.open(coffee_file))
-    end
-  end
-
-  desc "generates compiled coffeescript and handlebars templates"
-  task :generate do
-    require 'config/initializers/plugin_symlinks'
-    require 'fileutils'
-    require 'canvas'
-    require 'canvas/coffee_script'
-
-    # clear out all the files in case there are any old compiled versions of
-    # files that don't map to any source file anymore
-    paths_to_remove = [
-      'public/javascripts/compiled',
-      'public/javascripts/jst',
-      'public/plugins/*/javascripts/{compiled,javascripts/jst}'
-    ] + Dir.glob('spec/javascripts/**/*Spec.js')
-    FileUtils.rm_rf(paths_to_remove)
-
-    threads = []
-    threads << Thread.new do
-      puts "--> Pre-compiling handlebars templates"
-      handlebars_time = Benchmark.realtime { Rake::Task['jst:compile'].invoke }
-      puts "--> Pre-compiling handlebars templates finished in #{handlebars_time}"
-    end
-
-    threads << Thread.new do
-      coffee_time = Benchmark.realtime do
-        require 'coffee-script'
-
-        if Canvas::CoffeeScript.coffee_script_binary_is_available?
-          puts "--> Compiling CoffeeScript with 'coffee' binary"
-          dirs = Dir[Rails.root+'{app,spec}/coffeescripts/{,plugins/*/}**/*.coffee'].
-              map { |f| File.dirname(f) }.uniq
-          Parallel.each(dirs, :in_threads => Parallel.processor_count) do |dir|
-            destination = coffee_destination(dir)
-            FileUtils.mkdir_p(destination)
-            system("coffee -c -o #{destination} #{dir}/*.coffee")
-            raise "Unable to compile coffeescripts in #{dir}" if $?.exitstatus != 0
-          end
-        else
-          puts "--> Compiling CoffeeScript with coffee-script gem"
-          files = Dir[Rails.root+'{app,spec}/coffeescripts/{,plugins/*/}**/*.coffee']
-          Parallel.each(files, :in_threads => Parallel.processor_count) do |file|
-            compile_coffeescript file
+        if File.exists?('./package.json')
+          output = `yarn install || npm install` rescue `npm cache clean && npm install`
+          unless $?.exitstatus == 0
+            puts "INSTALL FAILURE:\n#{output}"
+            raise "Package installation failure for client app #{app_name}"
           end
         end
+
+        puts "\tRunning 'npm run build'..."
+        output = `./script/build`
+        unless $?.exitstatus == 0
+          puts "BUILD FAILURE:\n#{output}"
+          raise "Build script failed for client app #{app_name}"
+        end
+
+        puts "Client app '#{app_name}' was built successfully."
       end
-      puts "--> Compiling CoffeeScript finished in #{coffee_time}"
     end
 
-    threads.each(&:join)
+    maintain_client_app_symlinks
   end
 
-  desc "optimize and build js for production"
-  task :build do
-    require 'config/initializers/plugin_symlinks'
-    require 'canvas/require_js'
-    require 'erubis'
-
-    output = Erubis::Eruby.new(File.read("#{Rails.root}/config/build.js.erb")).
-      result(Canvas::RequireJs.get_binding)
-    File.open("#{Rails.root}/config/build.js", 'w') { |f| f.write(output) }
-
-    puts "--> Optimizing canvas-lms"
-    optimize_time = Benchmark.realtime do
-      output = `node #{Rails.root}/node_modules/requirejs/bin/r.js -o #{Rails.root}/config/build.js 2>&1`
-      raise "Error running js:build: \n#{output}\nABORTING" if $?.exitstatus != 0
+  desc "Build webpack js"
+  task :webpack do
+    puts "this webpack rake task is going away. just run `yarn run webpack-production` or `yarn run webpack-development` directly."
+    if ENV['RAILS_ENV'] == 'production' || ENV['USE_OPTIMIZED_JS'] == 'true' || ENV['USE_OPTIMIZED_JS'] == 'True'
+      puts "--> Building PRODUCTION webpack bundles"
+      `npm run webpack-production`
+    else
+      puts "--> Building DEVELOPMENT webpack bundles"
+      `npm run webpack-development`
     end
-    puts "--> Optimized canvas-lms in #{optimize_time}"
+    raise "Error running js:webpack: \nABORTING" if $?.exitstatus != 0
   end
 
+  desc "Ensure up-to-date node environment"
+  task :npm_install do
+    puts "node is: #{`node -v`.strip} (#{`which node`.strip})"
+    raise 'error running yarn install' unless `yarn install || npm install`
+  end
+
+  desc "Run Gulp Rev, for fingerprinting assets"
+  task :gulp_rev do
+    raise "Error reving files" unless system('node_modules/.bin/gulp rev')
+  end
 end

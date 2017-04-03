@@ -22,8 +22,6 @@ class ReportSnapshot < ActiveRecord::Base
 
   belongs_to :account
 
-  attr_accessible :report_type
-
   after_create :push_to_instructure_if_collection_enabled
   before_save :serialize_data
 
@@ -44,9 +42,9 @@ class ReportSnapshot < ActiveRecord::Base
         items << [stamp*1000, week[key]]
       end
     end
-    items.sort_by(&:first).once_per(&:first)
+    items.sort_by(&:first).uniq(&:first)
   end
-  
+
   def report_value_over_time(*args)
     if args.length == 1
       ReportSnapshot.report_value_over_time(self.data, args.first)
@@ -74,38 +72,32 @@ class ReportSnapshot < ActiveRecord::Base
     write_attribute(:data, data.to_json)
   end
 
-  named_scope :detailed, :conditions => { :report_type => 'counts_detailed' }
-  named_scope :progressive, :conditions => { :report_type => 'counts_progressive_detailed' }
-  named_scope :overview, :conditions => { :report_type => 'counts_overview' }
-  named_scope :progressive_overview, :conditions => { :report_type => 'counts_progressive_overview' }
+  scope :detailed, -> { where(:report_type => 'counts_detailed') }
+  scope :progressive, -> { where(:report_type => 'counts_progressive_detailed') }
+  scope :overview, -> { where(:report_type => 'counts_overview') }
+  scope :progressive_overview, -> { where(:report_type => 'counts_progressive_overview') }
 
   def push_to_instructure_if_collection_enabled
     begin
       return if self.report_type != REPORT_TO_SEND
       collection_type = Setting.get("usage_statistics_collection", "opt_out")
       return if collection_type  == "opt_out"
-      
-      installation_uuid = Setting.get("installation_uuid", "")
-      if installation_uuid == ""
-        installation_uuid = AutoHandle.generate_securish_uuid
-        Setting.set("installation_uuid", installation_uuid)
-      end
-  
+
       require 'lib/ssl_common'
-      
+
       data = {
           "collection_type" => collection_type,
-          "installation_uuid" => installation_uuid,
+          "installation_uuid" => Canvas.installation_uuid,
           "report_type" => self.report_type,
           "data" => read_attribute(:data),
-          "rails_env" => RAILS_ENV
+          "rails_env" => Rails.env
         }
 
       if collection_type == "opt_in"
         data["account_name"] = Account.default.name
         data["admin_email"] = Account.site_admin.users.first.pseudonyms.first.unique_id
       end
-      
+
       SSLCommon.post_form(STATS_COLLECTION_URL, data)
     rescue
     end

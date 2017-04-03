@@ -1,21 +1,30 @@
 <%
-  jammit_css :login
+  css_bundle :login_confirm
   @headers = false
-  @body_classes << "modal"
+  @body_classes << "full-width modal body--login-confirmation"
+
   content_for :page_title, t(:page_title, "Registration Confirmation Failed")
 %>
 
-<div id="modal-box">
-  <h2><%= t 'titles.problems_with_registration', "Problem with Registration" %></h2>
+<div id="modal-box" class="ic-Login-confirmation">
+  <header class="ic-Login-confirmation__header">
+    <%= image_tag("login/canvas-logo@2x.png", class:"ic-Login-confirmation__logo", alt:"Canvas by Instructure") %>
+  </header>
+  <div class="ic-Login-confirmation__content">
+    <h2 class="ic-Login-confirmation__headline">
+      <%= t 'titles.problems_with_registration', "Problem with Registration" %>
+    </h2>
     <p><%= t :details, %{It looks like you may have already confirmed your registration.  Try
     *logging in*
     with the email address and password you registered.  If you can't remember
     your password, click the "Forgot Password" link and you should get a new link
     that you can use to log in and re-set your password.},
     :wrapper => %{<a href="#{login_url}"><b>\\1</b></a>} %></p>
-    <% if Setting.get_cached("show_feedback_link", "false") == "true" %>
-      <p><%= t :feedback, %{If you keep having problems, click the "Help" link below to search the guides
-      or to let us know what's going on.} %>
+    <% if show_feedback_link? %>
+      <p>
+      <%= t "If you keep having problems, click the \"%{link}\" link below to search the guides
+      or to let us know what's going on.", :link => help_link_name %>
     <% end %>
     </p>
+  </div>
 </div>

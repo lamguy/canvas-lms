@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2011 Instructure, Inc.
+# Copyright (C) 2011 - 2015 Instructure, Inc.
 #
 # This file is part of Canvas.
 #
@@ -17,73 +17,51 @@
 #
 
 class Setting < ActiveRecord::Base
-  attr_accessible :name, :value
+  self.shard_category = :unsharded if self.respond_to?(:shard_category=)
 
   @@cache = {}
+  @@yaml_cache = {}
 
   def self.get(name, default)
-    Setting.find_or_initialize_by_name(name, :value => default).value
-  end
-  
-  def self.set(name, value)
-    @@cache.delete(name)
-    s = Setting.find_or_initialize_by_name(name)
-    s.value = value
-    s.save!
-  end
-  
-  def self.remove(name)
-    Setting.find_by_name(name).destroy rescue nil
-  end
-  
-  def self.get_or_set(name, new_val)
-    Setting.find_or_create_by_name(name, :value => new_val).value
-  end
-  
-  # this cache doesn't get invalidated by other rails processes, obviously, so
-  # use this only for relatively unchanging data
-  def self.get_cached(name, default)
     if @@cache.has_key?(name)
       @@cache[name]
     else
-      @@cache[name] = self.get(name, default)
+      begin
+        from_db = Setting.where(name: name).first.try(:value)
+      rescue ActiveRecord::StatementInvalid => e
+        # the db may not exist yet
+        Rails.logger.warn("Unable to read setting: #{e}")
+      end
+      @@cache[name] = from_db || default.try(:to_s)
     end
   end
-  
+
+  # Note that after calling this, you should send SIGHUP to all running Canvas processes
+  def self.set(name, value)
+    @@cache.delete(name)
+    s = Setting.where(name: name).first_or_initialize
+    s.value = value.try(:to_s)
+    s.save!
+  end
+
+  def self.get_or_set(name, new_val)
+    Setting.where(name: name).first_or_create(value: new_val).value
+  end
+
+  # this cache doesn't get invalidated by other rails processes, obviously, so
+  # use this only for relatively unchanging data
+
   def self.clear_cache(name)
     @@cache.delete(name)
   end
-  
+
   def self.reset_cache!
     @@cache = {}
+    @@yaml_cache = {}
   end
-  
+
   def self.remove(name)
     @@cache.delete(name)
-    s = Setting.find_by_name(name)
-    s.destroy if s
-  end
-  
-  def self.config_key(config_name, with_current_rails_env=true)
-    "yaml_config_#{config_name}_#{Rails.env}_#{with_current_rails_env}"
-  end
-
-  def self.set_config(config_name, value)
-    raise "config settings can only be set via config file" unless RAILS_ENV == 'test'
-    @@cache[config_key(config_name)] = value
-  end
-
-  def self.from_config(config_name, with_current_rails_env=true)
-    key = config_key(config_name, with_current_rails_env)
-    
-    return @@cache[key] if @@cache[key] # if the config wasn't found it'll try again
-    
-    config = nil
-    path = File.join(Rails.root, 'config', "#{config_name}.yml")
-    if File.exists?(path)
-      config = YAML.load_file(path).with_indifferent_access
-      config = config[Rails.env] if with_current_rails_env
-    end
-    @@cache[key] = config
+    Setting.where(name: name).delete_all
   end
 end

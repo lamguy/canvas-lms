@@ -19,23 +19,32 @@
 define([
   'i18n!message_students',
   'jquery' /* $ */,
+  'jsx/shared/helpers/numberHelper',
   'jquery.instructure_forms' /* formSubmit */,
   'jqueryui/dialog',
-  'jquery.instructure_misc_plugins' /* showIf */
-], function(I18n, $) {
-
+  'jquery.instructure_misc_plugins', /* showIf */
+], function (I18n, $, numberHelper) {
   var $message_students_dialog = $("#message_students_dialog");
+  var $sendButton = $message_students_dialog.find(".send_button");
   var currentSettings = {};
+  var checkSendable = function() {
+    disableSend(
+      $message_students_dialog.find("#body").val().length == 0 ||
+      $message_students_dialog.find(".student:not(.blank):visible").length == 0
+    );
+  }
+
+  /*global messageStudents*/
   window.messageStudents = function(settings) {
     currentSettings = settings;
     $message_students_dialog.find(".message_types").empty();
-    for(var idx in settings.options) {
+    for(var idx=0, l=settings.options.length; idx < l; idx++) {
       var $option = $("<option/>");
       var option = settings.options[idx];
       $option.val(idx).text(option.text);
       $message_students_dialog.find(".message_types").append($option);
     }
-    
+
     var title = settings.title,
         $li = $message_students_dialog.find("ul li.blank:first"),
         $ul = $message_students_dialog.find("ul"),
@@ -43,24 +52,44 @@ define([
 
     $message_students_dialog.find("ul li:not(.blank)").remove();
 
-    for(var idx in settings.students) {
+    for (var i = 0; i < settings.students.length; i++) {
       var $student = $li.clone(true).removeClass('blank');
-      $student.find(".name").text(settings.students[idx].name);
-      $student.find(".score").text(settings.students[idx].score);
-      $student.data('id', settings.students[idx].id);
-      $student.user_data = settings.students[idx]
+
+      $student.find('.name').text(settings.students[i].name);
+      $student.find('.score').text(settings.students[i].score);
+      var remove_text = I18n.t("Remove %{student} from recipients", {student: settings.students[i].name});
+      var $remove_button = $student.find('.remove-button');
+      $remove_button.attr('title', remove_text).append($("<span class='screenreader-only'></span>").text(remove_text));
+      $remove_button.click(function(event) {
+        event.preventDefault();
+        // hide the selected student
+        var $s = $(this).closest('li');
+        $s.hide('fast', checkSendable);
+        // focus the next visible student, or the subject field if that was the last one in the list
+        var $next = $s.nextAll(':visible:first');
+        if ($next.length) {
+          $('button', $next).focus();
+        } else {
+          $('#message_assignment_recipients #subject').focus();
+        }
+      });
+
+      $student.data('id', settings.students[i].id);
+      $student.user_data = settings.students[i];
+
       $ul.append($student.show());
-      students_hash[settings.students[idx].id] = $student;
+      students_hash[settings.students[i].id] = $student;
     }
-    
+
     $ul.show();
-    
+
     $message_students_dialog.data('students_hash', students_hash),
     $message_students_dialog.find(".asset_title").text(title);
     $message_students_dialog.find(".out_of").showIf(settings.points_possible != null);
     $message_students_dialog.find(".send_button").text(I18n.t("send_message", "Send Message"));
-    $message_students_dialog.find(".points_possible").text(settings.points_possible);
-    
+    $message_students_dialog.find(".points_possible").text(I18n.n(settings.points_possible));
+    $message_students_dialog.find("[name=context_code]").val(settings.context_code);
+
     $message_students_dialog.find("textarea").val("");
     $message_students_dialog.find("select")[0].selectedIndex = 0;
     $message_students_dialog.find("select").change();
@@ -69,12 +98,14 @@ define([
       modal: true
     }).dialog('open').dialog('option', 'title', I18n.t("message_student", "Message Students for %{course_name}", {course_name: title}));
   };
+
   $(document).ready(function() {
-    $message_students_dialog.find(".cutoff_score").bind('change blur keyup', function() {
-      $message_students_dialog.find("select").change();
-    });
-    $message_students_dialog.find(".cancel_button").click(function() {
-      $message_students_dialog.dialog('close');
+    $message_students_dialog.find("button").click(function(e) {
+      var btn = $(e.target);
+      if (btn.hasClass("disabled")) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
     });
     $("#message_assignment_recipients").formSubmit({
       processData: function(data) {
@@ -87,31 +118,34 @@ define([
         return data;
       },
       beforeSubmit: function(data) {
-        $(this).find("button").attr('disabled', true).filter(".send_button").text(I18n.t("buttons.sending_message", "Sending Message..."));
+        disableButtons(true)
+        $(this).find(".send_button").text(I18n.t("Sending Message..."));
       },
       success: function(data) {
-        $(this).find(".send_button").text("Message Sent!");
-        var $form = $(this);
-        setTimeout(function() {
-          $form.find("button").attr('disabled', false).filter(".send_button").text(I18n.t("buttons.send_message", "Send Message"));
-          $("#message_students_dialog").dialog('close');
-        }, 2000);
+        $.flashMessage(I18n.t("Message sent!"));
+        disableButtons(false);
+        $(this).find(".send_button").text(I18n.t("Send Message"));
+        $("#message_students_dialog").dialog('close');
       },
       error: function(data) {
-        $(this).find("button").attr('disabled', false).filter(".send_button").text(I18n.t("buttons.send_message_failed", "Sending Message Failed, please try again"));
+        disableButtons(false);
+        $(this).find(".send_button").text(I18n.t("Sending Message Failed, please try again"));
       }
     });
-    $message_students_dialog.find("select").change(function() {
-      var idx = parseInt($(this).val(), 10) || 0;
+
+    var showStudentsMessageSentTo = function() {
+      var idx = parseInt($message_students_dialog.find("select").val(), 10) || 0;
       var option = currentSettings.options[idx];
-      var students_hash = $message_students_dialog.data('students_hash'),
-          cutoff = parseFloat($message_students_dialog.find(".cutoff_score").val(), 10);
-      if (!cutoff && cutoff !== 0) {
+      var students_hash = $message_students_dialog.data('students_hash');
+      var cutoff = numberHelper.parse($message_students_dialog.find('.cutoff_score').val());
+      if (isNaN(cutoff)) {
         cutoff = null;
       }
       var student_ids = null;
       var students_list = [];
-      for(var idx in students_hash) { students_list.push(students_hash[idx]); }
+      for(var idx in students_hash) {
+        students_list.push(students_hash[idx]);
+      }
       if(students_hash) {
         if(option && option.callback) {
           student_ids = option.callback.call(window.messageStudents, cutoff, students_list);
@@ -120,20 +154,49 @@ define([
         }
       }
       student_ids = student_ids || [];
-      
+
+      if (currentSettings.subjectCallback) {
+        $message_students_dialog.find("[name=subject]").val(currentSettings.subjectCallback(option.text, cutoff));
+      }
       $message_students_dialog.find(".cutoff_holder").showIf(option.cutoff);
-      $message_students_dialog.find(".student_list").toggleClass('show_score', option.cutoff || option.score);
-      $message_students_dialog.find("button").attr('disabled', student_ids.length == 0);
+
+      $message_students_dialog.find(".student_list").toggleClass('show_score', !!(option.cutoff || option.score));
+      disableButtons(student_ids.length === 0);
 
       var student_ids_hash = {};
       for(var idx in student_ids) {
-        student_ids_hash[parseInt(student_ids[idx], 10) || 0] = true;
+        if (student_ids.hasOwnProperty(idx)) {
+          student_ids_hash[parseInt(student_ids[idx], 10) || 0] = true;
+        }
       }
       for(var idx in students_hash) {
         students_hash[idx].showIf(student_ids_hash[idx]);
       }
-    });
+    };
+
+    var closeDialog = function() {
+      $message_students_dialog.dialog('close');
+    };
+
+    $message_students_dialog.find(".cancel_button").click(closeDialog);
+    $message_students_dialog.find("select").change(showStudentsMessageSentTo).change(checkSendable);
+    $message_students_dialog.find(".cutoff_score").bind('change blur keyup', showStudentsMessageSentTo)
+      .bind('change blur keyup', checkSendable);
+    $message_students_dialog.find("#body").bind('change blur keyup', checkSendable);
   });
+
+  function disableButtons(disabled, buttons) {
+    if (buttons == null) {
+      buttons = $message_students_dialog.find("button");
+    }
+    buttons
+      .toggleClass("disabled", disabled)
+      .attr("aria-disabled", disabled);
+  }
+
+  function disableSend(disabled) {
+    disableButtons(disabled, $sendButton);
+  }
 
   return messageStudents;
 });

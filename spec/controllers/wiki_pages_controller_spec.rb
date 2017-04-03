@@ -19,222 +19,145 @@
 require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
 
 describe WikiPagesController do
-  describe "GET 'index'" do
-    it "should redirect on index request" do
-      course_with_teacher(:active_all => true)
-      get 'index', :course_id => @course.id
-      response.should be_redirect
-    end
-    
-    it "should redirect 'disabled', if disabled by the teacher" do
-      course_with_student_logged_in(:active_all => true)
-      @course.update_attribute(:tab_configuration, [{'id'=>2,'hidden'=>true}])
-      get 'index', :course_id => @course.id
-      response.should be_redirect
-      flash[:notice].should match(/That page has been disabled/)
-    end
-    
-    
-    it "should require authorization" do
-      course_with_teacher(:active_all => true)
-      get 'show', :course_id => @course.id, :id => 'front-page'
-      assert_unauthorized
-    end
-    
-    it "should assign values" do
-      course_with_teacher_logged_in(:active_all => true)
-      get 'show', :course_id => @course.id, :id => 'front-page'
-      response.should be_success
-      assigns[:wiki].should_not be_nil
-      assigns[:page].should_not be_nil
-    end
-    
-    it "should create entities if not already existing" do
-      course_with_teacher_logged_in(:active_all => true)
-      get 'show', :course_id => @course.id, :id => 'front-page'
-      response.should be_success
-      assigns[:wiki].should_not be_nil
-      assigns[:page].should_not be_nil
-      assigns[:page].title.should eql("Front Page")
-    end
-    
-    it "should retrieve existing entities" do
-      course_with_teacher_logged_in(:active_all => true)
-      page = @course.wiki.wiki_page
-      page.save!
-      get 'show', :course_id => @course.id, :id => 'front-page'
-      response.should be_success
-      assigns[:wiki].should_not be_nil
-      assigns[:wiki].should eql(page.wiki)
-      assigns[:page].should_not be_nil
-      assigns[:page].title.should eql("Front Page")
-      assigns[:page].should eql(page)
-    end
-    
+  before do
+    course_with_teacher_logged_in(active_all: true)
+    @wiki = @course.wiki
   end
-  
-  describe "GET 'show'" do
-    it "should require authorization" do
-      course_with_teacher(:active_all => true)
-      get 'show', :course_id => @course.id, :id => "some-page"
-      assert_unauthorized
+
+  describe "GET 'front_page'" do
+    it "should redirect" do
+      get 'front_page', :course_id => @course.id
+      expect(response).to be_redirect
+      expect(response.location).to match(%r{/courses/#{@course.id}/pages})
     end
-    
-    it "should assign variables" do
-      course_with_teacher_logged_in(:active_all => true)
-      get 'show', :course_id => @course.id, :id => "some-page"
-      response.should be_success
-      assigns[:wiki].should_not be_nil
-      assigns[:page].should_not be_nil
-      assigns[:page].title.should eql("Some Page")
-    end
-    
-    it "should allow students when allowed" do
-      course_with_teacher_logged_in(:active_all => true)
-      post 'create', :course_id => @course.id, :wiki_page => {:title => "Some Secret Page"}
-      response.should be_redirect
-      page = assigns[:page]
-      page.should_not be_nil
-      page.should_not be_new_record
-      page.title.should == "Some Secret Page"
-      student = user()
-      enrollment = @course.enroll_student(student)
-      enrollment.accept!
-      @course.reload
-      user_session(student)
-      get 'show', :course_id => @course.id, :id => page.wiki_id
-      response.should be_success
-      assigns[:wiki].should_not be_nil
-      assigns[:page].should_not be_nil
-      assigns[:page].title.should eql("Some Secret Page")
-      page.hide_from_students = true
-      page.save
-      page.reload
-      get 'show', :course_id => @course.id, :id => page.wiki_id
-      assert_unauthorized
+
+    it "sets up js_env for view_all_pages link" do
+      front_page = @wiki.wiki_pages.create!(title: "ponies4ever")
+      @wiki.set_front_page_url!(front_page.url)
+      get 'front_page', course_id: @course.id
+      expect(response).to be_success
+      expect(assigns[:js_env][:DISPLAY_SHOW_ALL_LINK]).to be(true)
     end
   end
-  
-  # describe "GET 'revisions'" do
-  #   it "should require authorization" do
-  #     course_with_teacher(:active_all => true)
-  #     get 'show', :course_id => @course.id, :id => "some-page"
-  #     assert_unauthorized
-  #   end
-  #   
-  #   it "should assign variables" do
-  #     course_with_teacher_logged_in(:active_all => true)
-  #     get 'revisions', :course_id => @course.id, :id => "some-page", :format => 'html'
-  #     response.should be_success
-  #     assigns[:wiki].should_not be_nil
-  #     assigns[:page].should_not be_nil
-  #     assigns[:page].title.should eql("some_page")
-  #   end
-  # end
-  
-  describe "POST 'create'" do
-    it "should require authorization" do
-      course_with_teacher(:active_all => true)
-      post 'create', :course_id => @course.id, :wiki_page => {:title => "Some Great Page"}
-      assert_unauthorized
+
+  context "with page" do
+    before do
+      @page = @wiki.wiki_pages.create!(title: "ponies5ever", body: "")
     end
-    
-    it "should create page" do
-      course_with_teacher_logged_in(:active_all => true)
-      post 'create', :course_id => @course.id, :wiki_page => {:title => "Some Great Page"}
-      response.should be_redirect
-      assigns[:page].should_not be_nil
-      assigns[:page].should_not be_new_record
-      assigns[:page].title.should eql("Some Great Page")
+
+    describe "GET 'show_redirect'" do
+      it "should redirect" do
+        get 'show_redirect', :course_id => @course.id, :id => @page.url
+        expect(response).to be_redirect
+        expect(response.location).to match(%r{/courses/#{@course.id}/pages/#{@page.url}})
+      end
     end
-    
-    it "should allow users to create a page" do
-      group_with_user_logged_in(:active_all => true)
-      post 'create', :group_id => @group.id, :wiki_page => {:title => "Some Great Page"}
-      response.should be_redirect
-      assigns[:page].should_not be_nil
-      assigns[:page].should_not be_new_record
-      assigns[:page].title.should eql("Some Great Page")
+
+    describe "GET 'show'" do
+      it "should render" do
+        get 'show', course_id: @course.id, id: @page.url
+        expect(response).to be_successful
+      end
+    end
+
+    describe "GET 'edit'" do
+      it "should render" do
+        get 'edit', course_id: @course.id, id: @page.url
+        expect(response).to be_successful
+      end
+    end
+
+    describe "GET 'revisions'" do
+      it "should render" do
+        get 'revisions', course_id: @course.id, wiki_page_id: @page.url
+        expect(response).to be_successful
+      end
+    end
+
+    context "differentiated assignments" do
+      before do
+        assignment = @course.assignments.create!(
+          submission_types: 'wiki_page',
+          only_visible_to_overrides: true
+        )
+        @page.assignment = assignment
+        @page.editing_roles = "teachers,students"
+        @page.save!
+
+        @student_with_override, @student_without_override = create_users(2, return_type: :record)
+        @section = @course.course_sections.create!(name: "test section")
+        create_section_override_for_assignment(assignment, course_section: @section)
+      end
+
+      context "for unassigned students" do
+        before do
+          @course.enroll_student(@student_without_override, enrollment_state: 'active')
+          user_session(@student_without_override)
+        end
+
+        it "should allow show" do
+          get 'show', course_id: @course.id, id: @page.url
+          expect(response.code).to eq "200"
+        end
+
+        it "should allow edit" do
+          get 'edit', course_id: @course.id, id: @page.url
+          expect(response.code).to eq "200"
+        end
+
+        it "should allow revisions" do
+          get 'revisions', course_id: @course.id, wiki_page_id: @page.url
+          expect(response.code).to eq "200"
+        end
+
+        context "feature enabled" do
+          before do
+            ConditionalRelease::Service.stubs(:configured?).returns(true)
+            @course.enable_feature!(:conditional_release)
+          end
+
+          it "should forbid show" do
+            get 'show', course_id: @course.id, id: @page.url
+            expect(response).to be_redirect
+            expect(response.location).to eq course_wiki_pages_url(@course)
+          end
+
+          it "should forbid edit" do
+            get 'edit', course_id: @course.id, id: @page.url
+            expect(response).to be_redirect
+            expect(response.location).to eq course_wiki_pages_url(@course)
+          end
+
+          it "should forbid revisions" do
+            get 'revisions', course_id: @course.id, wiki_page_id: @page.url
+            expect(response).to be_redirect
+            expect(response.location).to eq course_wiki_pages_url(@course)
+          end
+        end
+      end
+
+      context "for assigned students" do
+        before do
+          student_in_section(@section, user: @student_with_override)
+          user_session(@student_with_override)
+        end
+
+        it "should allow show" do
+          get 'show', course_id: @course.id, id: @page.url
+          expect(response.code).to eq "200"
+        end
+
+        it "should allow edit" do
+          get 'edit', course_id: @course.id, id: @page.url
+          expect(response.code).to eq "200"
+          expect(controller.js_env[:CONDITIONAL_RELEASE_SERVICE_ENABLED]).to eq false
+        end
+
+        it "should allow revisions" do
+          get 'revisions', course_id: @course.id, wiki_page_id: @page.url
+          expect(response.code).to eq "200"
+        end
+      end
     end
   end
-  
-  describe "PUT 'update'" do
-    it "should require authorization" do
-      course_with_teacher(:active_all => true)
-      put 'update', :course_id => @course.id, :id => 1, :wiki_page => {:title => "Some Great Page"}
-      assert_unauthorized
-    end
-    
-    it "should update page" do
-      course_with_teacher_logged_in(:active_all => true)
-      @course.wiki.wiki_pages.create!(:title => 'Test')
-      put 'update', :course_id => @course.id, :id => @course.wiki.wiki_pages.first.url, :wiki_page => {:title => "Some Great Page"}
-      response.should be_redirect
-      assigns[:page].should_not be_nil
-      assigns[:page].title.should eql("Some Great Page")
-      page = assigns[:page]
-      
-      put 'update', :course_id => @course.id, :id => page.url, :wiki_page => {:title => "New Name"}
-      response.should be_redirect
-      assigns[:page].should_not be_nil
-      assigns[:page].title.should eql("New Name")
-    end
-    
-    it "should allow users to update a page" do
-      group_with_user_logged_in(:active_all => true)
-      @group.wiki.wiki_pages.create!(:title => 'Test')
-      put 'update', :group_id => @group.id, :id => @group.wiki.wiki_pages.first.url, :wiki_page => {:title => "Some Great Page"}
-      response.should be_redirect
-      assigns[:page].should_not be_nil
-      assigns[:page].title.should eql("Some Great Page")
-      page = assigns[:page]
-      
-      put 'update', :group_id => @group.id, :id => page.url, :wiki_page => {:title => "New Name"}
-      response.should be_redirect
-      assigns[:page].should_not be_nil
-      assigns[:page].title.should eql("New Name")
-    end
-  end
-  
-  describe "DELETE 'destroy'" do
-    it "should require authorization" do
-      course_with_teacher(:active_all => true)
-      page = @course.wiki.wiki_page
-      page.save!
-      delete 'destroy', :course_id => @course.id, :id => page.url
-      assert_unauthorized
-    end
-    
-    it "should redirect on deleting front page" do
-      course_with_teacher_logged_in(:active_all => true)
-      page = @course.wiki.wiki_page
-      page.save!
-      delete 'destroy', :course_id => @course.id, :id => page.url
-      flash[:error].should eql('You are not permitted to delete that page.')
-      response.should be_redirect
-    end
-    
-    it "should delete page" do
-      course_with_teacher_logged_in(:active_all => true)
-      page = @course.wiki.wiki_pages.create(:title => "a page")
-      page.save!
-      delete 'destroy', :course_id => @course.id, :id => page.url
-      response.should be_redirect
-      assigns[:page].should eql(page)
-      assigns[:page].should be_deleted #frozen
-      @course.wiki.wiki_pages.should be_include(page)
-    end
-    
-    it "should allow users to delete a page" do
-      group_with_user_logged_in(:active_all => true)
-      page = @group.wiki.wiki_pages.create(:title => "a page")
-      page.save!
-      delete 'destroy', :group_id => @group.id, :id => page.url
-      response.should be_redirect
-      assigns[:page].should eql(page)
-      assigns[:page].should be_deleted #frozen
-      @group.wiki.wiki_pages.should be_include(page)
-    end
-  end
-  
 end

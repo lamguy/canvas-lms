@@ -1,48 +1,54 @@
-# Settings specified here will take precedence over those in config/environment.rb
+environment_configuration(defined?(config) && config) do |config|
+  # Settings specified here will take precedence over those in config/application.rb
 
-# In the development environment your application's code is reloaded on
-# every request.  This slows down response time but is perfect for development
-# since you don't have to restart the webserver when you make code changes.
-config.cache_classes = false
+  # In the development environment your application's code is reloaded on
+  # every request.  This slows down response time but is perfect for development
+  # since you don't have to restart the webserver when you make code changes.
+  config.cache_classes = false
 
-# Log error messages when you accidentally call methods on nil.
-config.whiny_nils = true
+  # Show full error reports and disable caching
+  config.consider_all_requests_local = true
+  config.action_controller.perform_caching = false
 
-# Show full error reports and disable caching
-config.action_controller.consider_all_requests_local = true
-config.action_view.debug_rjs                         = true
-config.action_controller.perform_caching             = false
+  # run rake js:build to build the optimized JS if set to true
+  # ENV['USE_OPTIMIZED_JS']                            = 'true'
 
-# run rake js:build to build the optimized JS if set to true
-# ENV['USE_OPTIMIZED_JS']                            = 'true'
+  # Really do care if the message wasn't sent.
+  config.action_mailer.raise_delivery_errors = true
 
-# Really do care if the message wasn't sent.
-config.action_mailer.raise_delivery_errors = true
+  # initialize cache store. has to eval, not just require, so that it has
+  # access to config.
+  cache_store_rb = File.dirname(__FILE__) + "/cache_store.rb"
+  eval(File.new(cache_store_rb).read, nil, cache_store_rb, 1)
 
-config.to_prepare do
-  # Raise an exception on bad mass assignment. Helps us catch these bugs before
-  # they hit.
-  Canvas.protected_attribute_error = :raise
+  # allow debugging only in development environment by default
+  #
+  # Option to DISABLE_RUBY_DEBUGGING is helpful IDE-based debugging.
+  # The ruby debug gems conflict with the IDE-based debugger gem.
+  # Set this option in your dev environment to disable.
+  unless ENV['DISABLE_RUBY_DEBUGGING']
+    require 'byebug'
+    if ENV['REMOTE_DEBUGGING_ENABLED']
+      require 'byebug/core'
+      Byebug.start_server('0.0.0.0', 0)
+      puts "Byebug listening on 0.0.0.0:#{Byebug.actual_port}" # rubocop:disable Rails/Output
+      byebug_port_file = File.join(Dir.tmpdir, 'byebug.port')
+      File.write(byebug_port_file, Byebug.actual_port)
+    end
+  end
 
-  # Raise an exception on finder type mismatch or nil arguments. Helps us catch
-  # these bugs before they hit.
-  Canvas.dynamic_finder_nil_arguments_error = :raise
-  Canvas.dynamic_finder_type_cast_error = :raise
-end
+  # Print deprecation notices to the Rails logger
+  config.active_support.deprecation = :log
 
-# initialize cache store
-# this needs to happen in each environment config file, rather than a
-# config/initializer/* file, to allow Rails' full initialization of the cache
-# to take place, including middleware inserts and such.
-config.cache_store = Canvas.cache_store_config
+  # Only use best-standards-support built into browsers
+  config.action_dispatch.best_standards_support = :builtin
 
-# eval <env>-local.rb if it exists
-Dir[File.dirname(__FILE__) + "/" + File.basename(__FILE__, ".rb") + "-*.rb"].each { |localfile| eval(File.new(localfile).read) }
+  # we use lots of db specific stuff - don't bother trying to dump to ruby
+  # (it also takes forever)
+  config.active_record.schema_format = :sql
 
-# allow debugging only in development environment by default
-# ruby-debug is currently broken in 1.9.3
-if RUBY_VERSION < "1.9."
-  require "ruby-debug"
-else
-  require "debugger"
+  config.eager_load = false
+
+  # eval <env>-local.rb if it exists
+  Dir[File.dirname(__FILE__) + "/" + File.basename(__FILE__, ".rb") + "-*.rb"].each { |localfile| eval(File.new(localfile).read, nil, localfile, 1) }
 end

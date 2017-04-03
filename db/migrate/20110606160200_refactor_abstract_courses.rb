@@ -1,4 +1,6 @@
-class RefactorAbstractCourses < ActiveRecord::Migration
+class RefactorAbstractCourses < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
 
   def self.up
     remove_column :course_sections, :abstract_course_id

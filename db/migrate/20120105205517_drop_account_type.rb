@@ -1,4 +1,6 @@
-class DropAccountType < ActiveRecord::Migration
+class DropAccountType < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     remove_index :accounts, [:id, :type]
     remove_index :accounts, :type

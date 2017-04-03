@@ -23,52 +23,47 @@ describe "/users/user_dashboard" do
   it "should render" do
     course_with_student
     view_context
-    assigns[:courses] = [@course]
-    assigns[:enrollments] = [@enrollment]
-    assigns[:group_memberships] = []
-    assigns[:topics] = []
-    assigns[:upcoming_events] = []
+    assign(:courses, [@course])
+    assign(:enrollments, [@enrollment])
+    assign(:group_memberships, [])
+    assign(:topics, [])
+    assign(:upcoming_events, [])
+    assign(:stream_items, [])
 
     render "users/user_dashboard"
-    response.should_not be_nil
+    expect(response).not_to be_nil
   end
 
   it "should show announcements to users with no enrollments" do
-    user
+    user_factory
     view_context
-    assigns[:courses] = []
-    assigns[:enrollments] = []
-    assigns[:group_memberships] = []
-    assigns[:topics] = []
-    assigns[:upcoming_events] = []
-    assigns[:announcements] = [AccountNotification.new(:subject => "My Global Announcement", :account => Account.default)]
+    assign(:courses, [])
+    assign(:enrollments, [])
+    assign(:group_memberships, [])
+    assign(:topics, [])
+    assign(:upcoming_events, [])
+    assign(:stream_items, [])
+    assign(:announcements, [AccountNotification.create(:message => 'hi', :start_at => Date.today - 1.day,
+                                                          :end_at => Date.today + 2.days,
+                                                          :subject => "My Global Announcement", :account => Account.default)])
     render "users/user_dashboard"
-    response.body.should match /My Global Announcement/
+    expect(response.body).to match /My Global Announcement/
   end
 
-  it "should show single course invitation on dashboard" do
-    course_with_student(:active_course => 1)
-    view_context
-    assigns[:courses] = []
-    assigns[:enrollments] = []
-    assigns[:group_memberships] = []
-    assigns[:topics] = []
-    assigns[:upcoming_events] = []
-    render "users/user_dashboard"
-    response.body.should match /You've been invited/
-    response.body.should match /Accept Invitation/
-  end
+  context "with Student Planner enabled" do
+    it "should render out a div with id of dashboard-planner" do
+      course_with_student
+      view_context
+      @course.account.enable_feature!(:student_planner)
+      assign(:courses, [@course])
+      assign(:enrollments, [@enrollment])
+      assign(:group_memberships, [])
+      assign(:topics, [])
+      assign(:upcoming_events, [])
+      assign(:stream_items, [])
 
-  it "should link to course page for multiple invitations" do
-    course_with_student(:active_course => 1)
-    course_with_student(:active_course => 1, :user => @student)
-    view_context
-    assigns[:courses] = []
-    assigns[:enrollments] = []
-    assigns[:group_memberships] = []
-    assigns[:topics] = []
-    assigns[:upcoming_events] = []
-    render "users/user_dashboard"
-    response.body.should match /You've been invited to join 2 courses/
+      render "users/user_dashboard"
+      expect(response.body).to match /id="dashboard-planner"/
+    end
   end
 end

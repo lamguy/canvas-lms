@@ -1,6 +1,8 @@
-class DeleteSubEntriesOfDeletedDiscussionEntries < ActiveRecord::Migration
+class DeleteSubEntriesOfDeletedDiscussionEntries < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
-    DiscussionEntry.find_each(:conditions => {:workflow_state => 'deleted'}) do |entry|
+    DiscussionEntry.where(:workflow_state => 'deleted').find_each do |entry|
       entry.discussion_subentries.each &:destroy
     end
   end

@@ -1,4 +1,6 @@
-class AddGradingStandardsVersion < ActiveRecord::Migration
+class AddGradingStandardsVersion < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     add_column :grading_standards, :version, :integer
   end

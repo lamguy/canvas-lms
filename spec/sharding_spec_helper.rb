@@ -16,8 +16,17 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require File.expand_path(File.dirname(__FILE__) + '/spec_helper')
+require 'switchman/r_spec_helper'
+require_relative 'spec_helper'
+require_relative 'support/onceler/sharding'
 
-shared_examples_for "sharding" do
-  include Shard::RSpec
+def specs_require_sharding
+  include Switchman::RSpecHelper
+  include Onceler::Sharding
+
+  before :all do
+    Shard.with_each_shard do
+      Role.ensure_built_in_roles!
+    end
+  end
 end

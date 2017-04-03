@@ -17,37 +17,48 @@
 #
 
 module HasContentTags
-  
+
   def update_associated_content_tags_later
     send_later(:update_associated_content_tags) if @associated_content_tags_need_updating != false
   end
-  
+
   def update_associated_content_tags
-    ContentTag.update_for(self)
+    ContentTag.update_for(self) if @associated_content_tags_need_updating
   end
-  
+
   def check_if_associated_content_tags_need_updating
     @associated_content_tags_need_updating = false
     return if self.new_record?
-    return if self.respond_to?(:context_type) && self.context_type == 'SisBatch'
+    return if self.respond_to?(:context_type) && %w{SisBatch Folder}.include?(self.context_type)
     @associated_content_tags_need_updating = true if self.respond_to?(:title_changed?) && self.title_changed?
     @associated_content_tags_need_updating = true if self.respond_to?(:name_changed?) && self.name_changed?
     @associated_content_tags_need_updating = true if self.respond_to?(:display_name_changed?) && self.display_name_changed?
     @associated_content_tags_need_updating = true if self.respond_to?(:points_possible_changed?) && self.points_possible_changed?
     @associated_content_tags_need_updating = true if self.respond_to?(:workflow_state_changed?) && self.workflow_state_changed? || self.workflow_state == 'deleted'
+    @associated_content_tags_need_updating = true if self.is_a?(Attachment) && self.locked_changed?
   end
-  
+
   def self.included(klass)
-    klass.send(:after_save, :update_associated_content_tags_later)
+    klass.send(:after_save, :update_associated_content_tags)
     klass.send(:before_save, :check_if_associated_content_tags_need_updating)
   end
-  
+
   def locked_cache_key(user)
-    ['_locked_for', self, user].cache_key
+    keys = ['_locked_for3', self, user]
+    unlocked_at = self.respond_to?(:unlock_at) ? self.unlock_at : nil
+    locked_at = self.respond_to?(:lock_at) ? self.lock_at : nil
+    keys << (unlocked_at ? unlocked_at > Time.zone.now : false)
+    keys << (locked_at ? locked_at < Time.zone.now : false)
+    keys.cache_key
   end
-  
+
   def clear_locked_cache(user)
     Rails.cache.delete locked_cache_key(user)
   end
 
+  def relock_modules!(relocked_modules=[], student_ids=nil)
+    ContextModule.where(:id => ContentTag.where(:content_id => self, :content_type => self.class.to_s).not_deleted.select(:context_module_id)).each do |mod|
+      mod.relock_progressions(relocked_modules, student_ids)
+    end
+  end
 end

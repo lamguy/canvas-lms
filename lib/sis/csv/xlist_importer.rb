@@ -16,17 +16,18 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require 'lib/sis/csv/base_importer'
-require 'skip_callback'
-
 module SIS
   module CSV
-    class XlistImporter < BaseImporter
-    
-      def self.is_xlist_csv?(row)
+    class XlistImporter < CSVBaseImporter
+
+      def self.xlist_csv?(row)
         row.include?('xlist_course_id') && row.include?('section_id')
       end
-    
+
+      def self.identifying_fields
+        %w[section_id].freeze
+      end
+
       # possible columns:
       # xlist_course_id, section_id, status
       def process(csv)

@@ -23,8 +23,8 @@ describe "/discussion_topics/index" do
   it "should render" do
     course_with_teacher
     view_context(@course, @user)
-    assigns[:body_classes] = []
+    assign(:body_classes, [])
     render "discussion_topics/index"
-    response.should_not be_nil
+    expect(response).not_to be_nil
   end
 end

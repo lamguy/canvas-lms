@@ -1,4 +1,6 @@
-class AddStreamItemInstanceHidden < ActiveRecord::Migration
+class AddStreamItemInstanceHidden < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     add_column :stream_item_instances, :hidden, :boolean, :default => false, :null => false
 

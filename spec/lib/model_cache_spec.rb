@@ -19,15 +19,14 @@ require File.expand_path(File.dirname(__FILE__) + '/../spec_helper.rb')
 require 'lib/model_cache'
 
 describe ModelCache do
-  before do
+  before(:all) do
     class TestModelCacheUser < ActiveRecord::Base
-      set_table_name :users # reuse exiting tables so AR doesn't asplode
+      self.table_name = :users # reuse exiting tables so AR doesn't asplode
       include ModelCache
-      cacheable_by :id, :name
     end
 
     class TestModelCachePseudonym < ActiveRecord::Base
-      set_table_name :pseudonyms
+      self.table_name = :pseudonyms
       include ModelCache
 
       belongs_to :test_model_cache_user, :foreign_key => :user_id
@@ -35,80 +34,41 @@ describe ModelCache do
 
       belongs_to :test_model_cache_user_copy, :class_name => 'TestModelCacheUser', :foreign_key => :user_id
     end
-
-    user_with_pseudonym(:name => 'qwerty')
-    @user = TestModelCacheUser.find(:first, :conditions => {:id => @user.id})
-    @pseudonym = TestModelCachePseudonym.find(:first, :conditions => {:id => @pseudonym.id})
   end
 
-  after do
+  before do
+    user_with_pseudonym(:name => 'qwerty')
+    @user = TestModelCacheUser.where(:id => @user).first
+    @pseudonym = TestModelCachePseudonym.where(:id => @pseudonym).first
+  end
+
+  after(:all) do
     ModelCache.keys.delete('TestModelCacheUser')
     ModelCache.keys.delete('TestModelCachePseudonym')
-    subclasses = ActiveRecord::Base.send(:class_variable_get, :@@subclasses)[ActiveRecord::Base]
-    subclasses.delete(TestModelCacheUser)
-    subclasses.delete(TestModelCachePseudonym)
+    ActiveSupport::DescendantsTracker.class_variable_get(:@@direct_descendants)[ActiveRecord::Base].delete(TestModelCacheUser)
+    ActiveSupport::DescendantsTracker.class_variable_get(:@@direct_descendants)[ActiveRecord::Base].delete(TestModelCachePseudonym)
     Object.send(:remove_const, :TestModelCacheUser)
     Object.send(:remove_const, :TestModelCachePseudonym)
   end
 
   it "should not cache by default" do
-    u1 = TestModelCacheUser.find_by_id(@user.id)
-    u1.should eql(@user)
-    u1.should_not equal(@user)
-
-    u2 = TestModelCacheUser.find_by_name(@user.name)
-    u2.should eql(@user)
-    u2.should_not equal(@user)
-
-    u3 = @pseudonym.test_model_cache_user
-    u3.should eql(@user)
-    u3.should_not equal(@user)
+    u1 = @pseudonym.test_model_cache_user
+    expect(u1).to eql(@user)
+    expect(u1).not_to equal(@user)
   end
 
   context "with_cache" do
-    it "should cache configured finder lookups" do
-      ModelCache.with_cache(:test_model_cache_users => [@user]) do
-        TestModelCacheUser.find_by_id(@user.id).should equal(@user)
-        TestModelCacheUser.find_by_name(@user.name).should equal(@user)
-      end
-    end
-
     it "should cache configured instance lookups" do
       ModelCache.with_cache(:test_model_cache_users => [@user]) do
-        @pseudonym.test_model_cache_user.should equal(@user)
+        expect(@pseudonym.test_model_cache_user).to equal(@user)
       end
     end
 
     it "should not cache any other lookups" do
       ModelCache.with_cache(:test_model_cache_users => [@user]) do
-        u1 = TestModelCacheUser.find(:first, :conditions => {:id => @user.id})
-        u1.should eql(@user)
-        u1.should_not equal(@user)
-
         u2 = @pseudonym.test_model_cache_user_copy
-        u2.should eql(@user)
-        u2.should_not equal(@user)
-      end
-    end
-
-    it "should add to the cache if records are created" do
-      ModelCache.with_cache(:test_model_cache_users => [@user]) do
-        user = TestModelCacheUser.create
-
-        u1 = TestModelCacheUser.find_by_id(user.id)
-        u1.should equal(user)
-    
-        u2 = TestModelCacheUser.find_by_name(user.name)
-        u2.should equal(user)
-      end
-    end
-
-    it "should update the cache if records are updated" do
-      ModelCache.with_cache(:test_model_cache_users => [@user]) do
-        old_name = @user.name
-        @user.update_attribute :name, "asdf"
-        TestModelCacheUser.find_by_name(old_name).should be_nil
-        TestModelCacheUser.find_by_name("asdf").should equal(@user)
+        expect(u2).to eql(@user)
+        expect(u2).not_to equal(@user)
       end
     end
   end

@@ -1,15 +1,13 @@
-<% content_for :page_title do %><%= join_title t(:page_title, "Gradebook"), @context.name %><% end %>
-
-<% content_for :auto_discovery do %>
-  <% if @context_enrollment %>
-    <%= auto_discovery_link_tag(:atom, feeds_gradebook_url(@context_enrollment.feed_code), {:title => t('titles.feed', "Course Gradebook Atom Feed")}) %>
-  <% end %>
-<% end %>
-
-<% 
-  jammit_css :gradebook_uploads
-  js_bundle :gradebook_uploads 
+<%
+  title = join_title t("Upload Gradebook"), @context.name
+  content_for :page_title, title
+  css_bundle :slickgrid, :gradebook_uploads
+  js_bundle :gradebook_uploads
 %>
+
+<h1><%= title %></h1>
+
+<div id="spinner" style="height:250px"></div>
 
 <form id="gradebook_importer_resolution_section" style="display:none;">
   <h3><%= t('headers.import_error', "There was some stuff I couldn't figure out with the data that you uploaded:") %></h3>
@@ -27,7 +25,7 @@
           <th class='name'><%= t(:student_example, "Some Guy") %></th>
           <td>
             <select name="student_-iterator-">
-              <option value=""><%= t(:choose_option, "-- Choose --") %></option>
+              <option value=""><%= t("-- Choose student --") %></option>
               <option value="ignore" class="ignore"><%= t(:ignore_student_option, "Not in my class, Ignore this row.") %></option>
             </select>
           </td>
@@ -49,13 +47,13 @@
           <th class='title'><%= t(:assignment_example, "Equity Indices Quiz") %></th>
           <td>
             <select name="assignment_-iterator-">
-              <option value=""><%= t(:choose_option, "-- Choose --") %></option>
+              <option value=""><%= t("-- Choose assignment --") %></option>
               <option value="new" class="new"><%= t(:new_assignment_option, "A new assignment") %></option>
               <option value="ignore" class="ignore"><%= t(:ignore_assignment_option, "Bogus, ignore it") %></option>
             </select>
             <span class="points_possible_section">
-              <label><%= t('labels.points_possible', "Points Possible") %></label>
-              <input type="text" class="points_possible" />
+              <label for="points_possible"><%= t("Points Possible") %></label>
+              <input id="points_possible" type="text" class="points_possible" />
             </span>
           </td>
         </tr>
@@ -63,33 +61,42 @@
     </table>
   </div>
   <div class="button-container">
-    <button type="submit" class="button"><%= t('buttons.continue', "Continue %{icon}", :icon => raw('&rarr;')) %></button>
+    <button type="submit" class="btn"><%= t('buttons.continue', "Continue %{icon}", :icon => raw('&rarr;')) %></button>
   </div>
 </form>
 
 <div id="no_changes_detected" style="display:none;">
   <h2><%= t('headers.no_changes', "There were no changes detected in the gradebook you uploaded.") %></h2>
   <p>
-    <%= link_to(t('links.back', "Go back to Gradebook"), context_url(@context, :context_gradebook_url) ) %>
+  <%= link_to(t('links.back', "Go back to Gradebook"), polymorphic_url([@context, 'gradebook'])) %>
   </p>
-  
+
 </div>
 
-<% form_tag({}, {:method => "put", :id => "gradebook_grid_form", :style => "display:none;"}) do %>
-  <div id="gradebook_grid"></div>
+<%= form_tag({}, {:method => "put", :id => "gradebook_grid_form", :style => "display:none;"}) do %>
+  <div id="gradebook_uploader_container">
+    <div id="grid">
+      <div id="gradebook_grid_header"></div>
+      <div id="gradebook_grid"></div>
+    </div>
+  </div>
+
   <input type="hidden" name="json_data_to_submit" value="" />
   <div class="button-container" style="padding-left:7px;">
-    <button type="submit" class="button"><%= t('buttons.save_changes', "Save Changes") %></button>
-    <%= link_to t('#buttons.cancel', "Cancel"), :back , :class => "button button-secondary" %>
+    <button type="submit" class="btn"><%= t('buttons.save_changes', "Save Changes") %></button>
+    <%= link_to t('#buttons.cancel', "Cancel"), :back , :class => "btn btn button-secondary" %>
     <span id="assignments_without_changes_alert" style="display:none; margin-left: 50px;"><%= t('notices.unchanged', "Note: You uploaded some assignments that had no grade changes detected. They have been hidden.") %></span>
   </div>
 <% end -%>
+
+<div id="prevented-new-assignment-in-closed-period" style="display:none;">
+  <h4><%= t("Some assignments could not be created because they would fall in a closed grading period.") %></h4>
+</div>
+
+<div id="prevented-grading-ungradeable-submission" style="display:none;">
+  <h4><%= t("Some submissions are not gradeable; grade changes for those submissions have been ignored.") %></h4>
+</div>
+
 <style>
   /*keep this here because jquery.rule needs it to stick in dynamic styles for the slick.grid to keep all of the columns the same width*/
 </style>
-
-<% js_block do %>
-  <script type="text/javascript">
-    window.uploadedGradebook = <%= raw @uploaded_gradebook.to_json %>
-  </script>
-<% end %>

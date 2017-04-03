@@ -1,62 +1,71 @@
 define [
+  'jquery'
   'underscore'
   'i18n!registration'
   'compiled/fn/preventDefault'
-  'compiled/models/User'
-  'compiled/models/Pseudonym'
+  'compiled/registration/registrationErrors'
   'jst/registration/teacherDialog'
   'jst/registration/studentDialog'
-  'jst/registration/studentHigherEdDialog'
   'jst/registration/parentDialog'
-  'compiled/object/flatten'
+  'jst/registration/samlDialog'
+  'compiled/util/addPrivacyLinkToDialog'
+  'str/htmlEscape'
+  'compiled/jquery/validate'
   'jquery.instructure_forms'
   'jquery.instructure_date_and_time'
-], (_, I18n, preventDefault, User, Pseudonym, teacherDialog, studentDialog, studentHigherEdDialog, parentDialog, flatten) ->
+], ($, _, I18n, preventDefault, registrationErrors, teacherDialog, studentDialog, parentDialog, samlDialog, addPrivacyLinkToDialog, htmlEscape) ->
 
   $nodes = {}
-  templates = {teacherDialog, studentDialog, studentHigherEdDialog, parentDialog}
+  templates = {teacherDialog, studentDialog, parentDialog, samlDialog}
 
-  signupDialog = (id, title) ->
+  # we do this in coffee because of this hbs 1.3 bug:
+  # https://github.com/wycats/handlebars.js/issues/748
+  # https://github.com/fivetanley/i18nliner-handlebars/commit/55be26ff
+  termsHtml = ({terms_of_use_url, privacy_policy_url}) ->
+    I18n.t(
+      "teacher_dialog.agree_to_terms_and_pp"
+      "You agree to the *terms of use* and acknowledge the **privacy policy**."
+      wrappers: [
+        "<a href=\"#{htmlEscape terms_of_use_url}\" target=\"_blank\">$1</a>"
+        "<a href=\"#{htmlEscape privacy_policy_url}\" target=\"_blank\">$1</a>"
+      ]
+    )
+
+  signupDialog = (id, title, path=null) ->
     return unless templates[id]
     $node = $nodes[id] ?= $('<div />')
-    $node.html templates[id](
-      terms_url: "http://www.instructure.com/terms-of-use"
+    path ||= "/users"
+    html = templates[id](
+      account: ENV.ACCOUNT.registration_settings
+      terms_required: ENV.ACCOUNT.terms_required
+      terms_html: termsHtml(ENV.ACCOUNT)
+      path: path
     )
-    $node.find('.date-field').datetime_field()
-
+    $node.html html
     $node.find('.signup_link').click preventDefault ->
       $node.dialog('close')
       signupDialog($(this).data('template'), $(this).prop('title'))
 
     $form = $node.find('form')
-    promise = null
     $form.formSubmit
-      beforeSubmit: ->
-        promise = $.Deferred()
-        $form.disableWhileLoading(promise)
+      required: (el.name for el in $form.find(':input[name]').not('[type=hidden]'))
+      disableWhileLoading: 'spin_on_success'
+      errorFormatter: registrationErrors
       success: (data) =>
         # they should now be authenticated (either registered or pre_registered)
-        window.location = "/?login_success=1&registration_success=1"
-      formErrors: false
-      error: (errors) ->
-        promise.reject()
-        if _.any(errors.user.birthdate ? [], (e) -> e.type is 'too_young')
-          $node.find('.registration-dialog').html I18n.t('too_young_error', 'You must be at least %{min_years} years of age to use Canvas without a course join code.', min_years: ENV.USER.MIN_AGE)
-          $node.dialog buttons: [
-            text: I18n.t('ok', "OK")
-            click: -> $node.dialog('close')
-            class: 'btn-primary'
-          ]
-          return
-        errors = flatten
-          user: User::normalizeErrors(errors.user)
-          pseudonym: Pseudonym::normalizeErrors(errors.pseudonym)
-          observee: Pseudonym::normalizeErrors(errors.observee)
-        , arrays: false
-        if errors['user[birthdate]']
-          errors['user[birthdate(1)]'] = errors['user[birthdate]']
-          delete errors['user[birthdate]']
-        $form.formErrors errors
+        if data.redirect
+          window.location = data.redirect
+        else if data.course
+          window.location = "/courses/#{data.course.course.id}?registration_success=1"
+        else
+          window.location = "/?registration_success=1"
+      error: (data) =>
+        if data.error
+          error_msg = data.error.message
+          $("input[name='#{htmlEscape data.error.input_name}']").
+          next('.error_message').
+          text(htmlEscape error_msg)
+          $.screenReaderFlashMessage(error_msg)
 
     $node.dialog
       resizable: false
@@ -65,5 +74,13 @@ define [
       open: ->
         $(this).find('a').eq(0).blur()
         $(this).find(':input').eq(0).focus()
-      close: -> $('.error_box').filter(':visible').remove()
+        signupDialog.afterRender?()
+      close: ->
+        signupDialog.teardown?()
+        $('.error_box').filter(':visible').remove()
     $node.fixDialogButtons()
+    unless ENV.ACCOUNT.terms_required # term verbiage has a link to PP, so this would be redundant
+      addPrivacyLinkToDialog($node)
+
+  signupDialog.templates = templates
+  signupDialog

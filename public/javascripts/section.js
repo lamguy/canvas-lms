@@ -13,7 +13,8 @@ define([
   'jqueryui/autocomplete' /* /\.autocomplete/ */,
   'compiled/PaginatedList',
   'jst/courses/section/enrollment',
-  'compiled/presenters/sectionEnrollmentPresenter'
+  'compiled/presenters/sectionEnrollmentPresenter',
+  'jsx/context_cards/StudentContextCardTrigger'
 ], function(I18n, $, _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, PaginatedList, enrollmentTemplate, sectionEnrollmentPresenter) {
 
   $(document).ready(function() {
@@ -23,13 +24,13 @@ define([
         currentEnrollmentList   = new PaginatedList($('#current-enrollment-list'), {
           presenter: sectionEnrollmentPresenter,
           template: enrollmentTemplate,
-          url: '/api/v1/sections/' + section_id + '/enrollments'
+          url: '/api/v1/sections/' + section_id + '/enrollments?include[]=can_be_removed'
         }),
         completedEnrollmentList = new PaginatedList($('#completed-enrollment-list'), {
           presenter: sectionEnrollmentPresenter,
-          requestParams: { state: 'completed' },
+          requestParams: { state: 'completed', page: 1, per_page: 25 },
           template: enrollmentTemplate,
-          url: '/api/v1/sections/' + section_id + '/enrollments'
+          url: '/api/v1/sections/' + section_id + '/enrollments?include[]=can_be_removed'
         });
 
     $edit_section_form.formSubmit({
@@ -47,7 +48,6 @@ define([
       error: function(data) {
         $edit_section_form.loadingImage('remove');
         $edit_section_form.show();
-        $edit_section_form.formErrors(data);
       }
     })
     .find(":text")
@@ -132,7 +132,9 @@ define([
       }
       course.name = course.name || I18n.t('default_course_name', "Course ID \"%{course_id}\"", {course_id: course.id});
       $("#course_autocomplete_name_holder").show();
-      $("#course_autocomplete_name").text(I18n.t('status.confirming_course', "Confirming %{course_name}...", {course_name: course.name}));
+      var confirmingText = I18n.t('status.confirming_course', "Confirming %{course_name}...", {course_name: course.name});
+      $("#course_autocomplete_name").text(confirmingText);
+      $.screenReaderFlashMessage(confirmingText);
       $("#sis_id_holder,#account_name_holder").hide();
       $("#course_autocomplete_account_name").hide();
       var url = $.replaceTags($("#course_confirm_crosslist_url").attr('href'), 'id', course.id);
@@ -147,13 +149,16 @@ define([
           };
           $("#course_autocomplete_name_holder").fillTemplateData({data: template_data});
           $("#course_autocomplete_name").text(data.course.name);
+          $.screenReaderFlashMessage(data.course.name);
           $("#sis_id_holder").showIf(template_data.sis_id);
           $("#account_name_holder").showIf(template_data.account_name);
 
           $("#course_autocomplete_id").val(data.course.id);
           $("#crosslist_course_form .submit_button").attr('disabled', false);
         } else {
-          $("#course_autocomplete_name").text(I18n.t('errors.course_not_authorized_for_crosslist', "%{course_name} not authorized for cross-listing", {course_name: course.name}));
+          var errorText = I18n.t('errors.course_not_authorized_for_crosslist', "%{course_name} not authorized for cross-listing", {course_name: course.name});
+          $("#course_autocomplete_name").text(errorText);
+          $.screenReaderFlashError(errorText);
           $("#sis_id_holder,#account_name_holder").hide();
         }
       }, function(data) {

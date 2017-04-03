@@ -1,23 +1,38 @@
-# override time_zone_options_for_select so the name comes before the offset
-# (only change is to the convert_zones lambda). TODO: I18n the names
-ActionView::Helpers::InstanceTag.class_eval do
-  def time_zone_options_for_select(selected = nil, priority_zones = nil, model = ::ActiveSupport::TimeZone)
-    zone_options = ""
+module TimeZoneFormImprovements
+  def time_zone_options_for_select(selected = nil, priority_zones = nil, model = I18nTimeZone)
+    selected = selected.name if selected && selected.is_a?(ActiveSupport::TimeZone)
+    result = super(selected, priority_zones, model)
 
-    zones = model.all
-    convert_zones = lambda { |list| list.map { |z| [ "#{z.name} (#{z.formatted_offset})", z.name ] } }
+    # the current value isn't one of Rails' friendly zones; just add it to the top
+    # of the list literally
+    if selected && !ActiveSupport::TimeZone.all.map(&:name).include?(selected)
+      zone = ActiveSupport::TimeZone[selected]
+      return result unless zone
 
-    if priority_zones
-      if priority_zones.is_a?(Regexp)
-        priority_zones = model.all.find_all {|z| z =~ priority_zones}
-      end
-      zone_options += options_for_select(convert_zones[priority_zones], selected)
-      zone_options += "<option value=\"\" disabled=\"disabled\">-------------</option>\n"
-
-      zones = zones.reject { |z| priority_zones.include?( z ) }
+      unfriendly_zone = "".html_safe
+      unfriendly_zone.safe_concat options_for_select([["#{selected} (#{zone.formatted_offset})", selected]], selected)
+      unfriendly_zone.safe_concat content_tag("option".freeze, '-------------', value: '', disabled: true)
+      unfriendly_zone.safe_concat "\n"
+      unfriendly_zone.safe_concat result
+      result = unfriendly_zone
     end
 
-    zone_options += options_for_select(convert_zones[zones], selected)
-    zone_options.html_safe
+    result
   end
 end
+
+ActionView::Helpers::FormOptionsHelper.prepend(TimeZoneFormImprovements)
+
+module DataStreamingContentLength
+  def send_file(path, _options = {})
+    headers.merge!('Content-Length' => File.size(path).to_s)
+    super
+  end
+
+  def send_data(data, _options = {})
+    headers.merge!('Content-Length' => data.bytesize.to_s) if data.respond_to?(:bytesize)
+    super
+  end
+end
+
+ActionController::Base.include(DataStreamingContentLength)

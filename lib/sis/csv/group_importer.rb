@@ -16,14 +16,16 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require 'lib/sis/csv/base_importer'
-
 module SIS
   module CSV
     # note these are account-level groups, not course groups
-    class GroupImporter < BaseImporter
-      def self.is_group_csv?(row)
+    class GroupImporter < CSVBaseImporter
+      def self.group_csv?(row)
         row.include?('group_id') && row.include?('name')
+      end
+
+      def self.identifying_fields
+        %w[group_id].freeze
       end
 
       # expected columns

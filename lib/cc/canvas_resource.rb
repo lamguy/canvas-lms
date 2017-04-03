@@ -27,39 +27,76 @@ module CC
 
     def add_canvas_non_cc_data
       migration_id = create_key(@course)
-      
+
       @canvas_resource_dir = File.join(@export_dir, CCHelper::COURSE_SETTINGS_DIR)
+      canvas_export_path = File.join(CCHelper::COURSE_SETTINGS_DIR, CCHelper::CANVAS_EXPORT_FLAG)
       FileUtils::mkdir_p @canvas_resource_dir
-      
-      syl_rel_path = create_syllabus
-      
+
       resources = []
-      resources << run_and_set_progress(:create_course_settings, nil, I18n.t('course_exports.errors.course_settings', "Failed to export course settings"), migration_id)
+      resources << run_and_set_progress(:create_course_settings, nil, I18n.t('course_exports.errors.course_settings', "Failed to export course settings"), migration_id) if export_symbol?(:all_course_settings)
       resources << run_and_set_progress(:create_module_meta, nil, I18n.t('course_exports.errors.module_meta', "Failed to export module meta data"))
       resources << run_and_set_progress(:create_external_feeds, nil, I18n.t('course_exports.errors.external_feeds', "Failed to export external feeds"))
       resources << run_and_set_progress(:create_assignment_groups, nil, I18n.t('course_exports.errors.assignment_groups', "Failed to export assignment groups"))
       resources << run_and_set_progress(:create_grading_standards, 20, I18n.t('course_exports.errors.grading_standards', "Failed to export grading standards"))
-      resources << run_and_set_progress(:create_learning_outcomes, nil, I18n.t('course_exports.errors.learning_outcomes', "Failed to export learning outcomes"))
       resources << run_and_set_progress(:create_rubrics, nil, I18n.t('course_exports.errors.rubrics', "Failed to export rubrics"))
+      resources << run_and_set_progress(:create_learning_outcomes, nil, I18n.t('course_exports.errors.learning_outcomes', "Failed to export learning outcomes"))
       resources << run_and_set_progress(:files_meta_path, nil, I18n.t('course_exports.errors.file_meta', "Failed to export file meta data"))
       resources << run_and_set_progress(:create_events, 25, I18n.t('course_exports.errors.events', "Failed to export calendar events"))
-      
+
+      File.write(File.join(@canvas_resource_dir, CCHelper::MEDIA_TRACKS), '') # just in case an error happens later
+      resources << File.join(CCHelper::COURSE_SETTINGS_DIR, CCHelper::MEDIA_TRACKS)
+
+      # Create the syllabus resource
+      if export_symbol?(:syllabus_body) || export_symbol?(:all_syllabus_body)
+        syl_rel_path = create_syllabus
+        @resources.resource(
+          :identifier => migration_id + "_syllabus",
+          "type" => Manifest::LOR,
+          :href => syl_rel_path,
+          :intendeduse => "syllabus"
+        ) do |res|
+          res.file(:href=>syl_rel_path)
+        end
+      end
+
+      create_canvas_export_flag
+
+      # Create other resources
       @resources.resource(
-              :identifier => migration_id,
-              "type" => Manifest::LOR,
-              :href => syl_rel_path,
-              :intendeduse => "syllabus"
+        :identifier => migration_id,
+        "type" => Manifest::LOR,
+        :href => canvas_export_path
       ) do |res|
-        res.file(:href=>syl_rel_path)
+
         resources.each do |resource|
           res.file(:href=>resource) if resource
         end
+
+        res.file(:href => canvas_export_path)
       end
+
     end
-    
+
+    # Method Summary
+    #   The canvas export flag is just a txt file we can use to
+    #   verify this is a canvas flavor of common cartridge. We
+    #   do this because we can't change the structure of the xml
+    #   but still need some type of flag.
+    def create_canvas_export_flag
+      path = File.join(@canvas_resource_dir, 'canvas_export.txt')
+      canvas_export_file = File.open(path, 'w')
+
+      # Fun panda joke!
+      canvas_export_file << <<-JOKE
+Q: What did the panda say when he was forced out of his natural habitat?
+A: This is un-BEAR-able
+JOKE
+      canvas_export_file.close
+    end
+
     def create_syllabus(io_object=nil)
       syl_rel_path = nil
-      
+
       unless io_object
         syl_rel_path = File.join(CCHelper::COURSE_SETTINGS_DIR, CCHelper::SYLLABUS)
         path = File.join(@canvas_resource_dir, CCHelper::SYLLABUS)
@@ -67,10 +104,10 @@ module CC
       end
       io_object << @html_exporter.html_page(@course.syllabus_body || '', "Syllabus")
       io_object.close
-        
+
       syl_rel_path
     end
-    
+
     def create_course_settings(migration_id, document=nil)
       if document
         course_file = nil
@@ -90,24 +127,48 @@ module CC
         c.course_code @course.course_code
         c.start_at ims_datetime(@course.start_at) if @course.start_at
         c.conclude_at ims_datetime(@course.conclude_at) if @course.conclude_at
-        if for_course_copy
-          c.tab_configuration @course.tab_configuration.to_json if @course.tab_configuration.present?
+        if @course.tab_configuration.present?
+          tab_config = []
+          @course.tab_configuration.each do |t|
+            tab = t.dup
+            if tab['id'].is_a?(String)
+              # it's an external tool, so translate the id to a migration_id
+              tool_id = tab['id'].sub('context_external_tool_', '')
+              if tool = ContextExternalTool.find_for(tool_id, @course, :course_navigation, false)
+                tab['id'] = "context_external_tool_#{create_key(tool)}"
+              end
+            end
+            tab_config << tab
+          end
+          c.tab_configuration tab_config.to_json
         end
         atts = Course.clonable_attributes
         atts -= Canvas::Migration::MigratorHelper::COURSE_NO_COPY_ATTS
         atts << :grading_standard_enabled
         atts << :storage_quota
-        atts.each do |att|
-          c.tag!(att, @course.send(att)) unless @course.send(att).nil? || @course.send(att) == ''
+
+        if @course.image_url.present?
+          atts << :image_url
+        elsif @course.image_id.present?
+          if image_att = @course.attachments.active.where(id: @course.image_id).first
+            c.image_identifier_ref(create_key(image_att))
+          end
         end
-        c.hide_final_grade @course.settings[:hide_final_grade] unless @course.settings[:hide_final_grade].nil?
+
+        @course.disable_setting_defaults do # so that we don't copy defaulted settings
+          atts.each do |att|
+            c.tag!(att, @course.send(att)) unless @course.send(att).nil? || @course.send(att) == ''
+          end
+        end
         if @course.grading_standard
           if @course.grading_standard.context_type == "Account"
             c.grading_standard_id @course.grading_standard.id
           else
             c.grading_standard_identifier_ref create_key(@course.grading_standard)
+            add_item_to_export(@course.grading_standard)
           end
         end
+        c.root_account_uuid(@course.root_account.uuid) if @course.root_account
       end
       course_file.close if course_file
       rel_path

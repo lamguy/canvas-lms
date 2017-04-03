@@ -1,14 +1,14 @@
-class RecalculateMutedAssignments < ActiveRecord::Migration
+class RecalculateMutedAssignments < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
-    
-    course_ids = Assignment.find(:all, 
-                                 :conditions => ['muted = ? AND context_type = ?', true, 'Course'], 
-                                 :select => 'distinct context_id').map(&:context_id)
+
+    course_ids = Assignment.where(:muted => true, :context_type => 'Course').select(:context_id).distinct.map(&:context_id)
     course_ids.each do |id|
       c = Course.find id
       c.recompute_student_scores
     end
-    
+
   end
 
   def self.down

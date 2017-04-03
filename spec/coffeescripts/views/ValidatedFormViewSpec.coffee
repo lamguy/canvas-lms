@@ -5,7 +5,7 @@ define [
   'helpers/simulateClick'
 ], ($, {Model}, ValidatedFormView, click) ->
 
-  module 'ValidatedFormView',
+  QUnit.module 'ValidatedFormView',
     setup: ->
       @server = sinon.fakeServer.create()
       @clock = sinon.useFakeTimers()
@@ -18,6 +18,7 @@ define [
       @server.restore()
       @clock.tick 250 # tick past errorBox animations
       @clock.restore()
+      $('#fixtures').empty()
 
   sendFail = (server, response = '') ->
     server.respond 'POST', '/fail', [
@@ -38,6 +39,7 @@ define [
   # Dummy form view for testing
   class MyForm extends ValidatedFormView
     initialize: ->
+      super
       @model = new Model
       @model.url = '/fail'
       @render()
@@ -125,4 +127,68 @@ define [
       @clock.tick 20 # disableWhileLoading does its thing in a setTimeout
       equal @form.$(':disabled').length, 3
     @form.submit()
+    sendSuccess(@server)
 
+  test 'submit delegates to saveFormData', 1, ->
+    @spy(@form, 'saveFormData')
+
+    @form.submit()
+    ok @form.saveFormData.called, 'saveFormData called'
+
+  test 'submit calls validateBeforeSave', 1, ->
+    @spy(@form, 'validateBeforeSave')
+
+    @form.submit()
+    ok @form.validateBeforeSave.called, 'validateBeforeSave called'
+
+  test 'submit always calls hideErrors', 1, ->
+    @spy(@form, 'hideErrors')
+
+    @form.submit()
+    ok @form.hideErrors.called, 'hideErrors called'
+
+  test 'validateBeforeSave delegates to validateFormData, by default', 1, ->
+    @spy(@form, 'validateFormData')
+
+    @form.validateBeforeSave({})
+    ok @form.validateFormData.called, 'validateFormData called'
+
+  test 'validate delegates to validateFormData', 1, ->
+    @spy(@form, 'validateFormData')
+
+    @form.validate()
+    ok @form.validateFormData.called, 'validateFormData called'
+
+  test 'validate always calls hideErrors', 2, ->
+    @stub(@form, 'validateFormData')
+    @spy(@form, 'hideErrors')
+
+    @form.validateFormData.returns({})
+    @form.validate()
+    ok @form.hideErrors.called, 'hideErrors called with no errors'
+
+    @form.hideErrors.reset()
+    @form.validateFormData.returns
+      errors: [
+        type: 'required'
+        message: 'REQUIRED!'
+      ]
+    @form.validate()
+    ok @form.hideErrors.called, 'hideErrors called with errors'
+
+  test 'validate always calls showErrors', 2, ->
+    @stub(@form, 'validateFormData')
+    @spy(@form, 'showErrors')
+
+    @form.validateFormData.returns({})
+    @form.validate()
+    ok @form.showErrors.called, 'showErrors called with no errors'
+
+    @form.showErrors.reset()
+    @form.validateFormData.returns
+      errors: [
+        type: 'required'
+        message: 'REQUIRED!'
+      ]
+    @form.validate()
+    ok @form.showErrors.called, 'showErrors called with errors'

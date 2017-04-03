@@ -1,6 +1,7 @@
-class UpdateCollectionItemImageColumns < ActiveRecord::Migration
+class UpdateCollectionItemImageColumns < ActiveRecord::Migration[4.2]
   tag :predeploy
 
+  # rubocop:disable Migration/RemoveColumn
   def self.up
     add_column :collection_item_datas, :image_pending, :boolean
     add_column :collection_item_datas, :image_attachment_id, :integer, :limit => 8

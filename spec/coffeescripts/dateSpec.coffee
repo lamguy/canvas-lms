@@ -1,6 +1,6 @@
-define [ 'vendor/date' ], ->
+define [ 'vendor/date' ], () ->
 
-  module 'Date'
+  QUnit.module 'Date'
 
   test 'Date.parse', ->
     # create the same date the "new Date" would if the browser were in UTC
@@ -58,7 +58,7 @@ define [ 'vendor/date' ], ->
 
     for offset, expectedResult of examples
       date = new Date
-      sinon.stub(date, 'getTimezoneOffset').returns(Number(offset))
+      @stub(date, 'getTimezoneOffset').returns(Number(offset))
       equal date.getUTCOffset(), expectedResult
 
   test 'date.add* at DST-end', ->
@@ -73,3 +73,10 @@ define [ 'vendor/date' ], ->
     ok date.clone().addSeconds(1).equals(new Date date.clone().setUTCSeconds 60)
     ok date.clone().addMinutes(1).equals(new Date date.clone().setUTCMinutes 60)
     ok date.clone().addHours(1).equals(new Date date.clone().setUTCHours date.getUTCHours() + 1)
+
+  test 'date.set at DST-end', ->
+    date = new Date 2012, 10, 4, 0, 0, 0
+    date.set(hour: 14)
+    ok date.getHours() == 14
+    date.set(hour: 1)
+    ok date.getHours() == 1

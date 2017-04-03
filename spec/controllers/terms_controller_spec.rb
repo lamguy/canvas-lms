@@ -19,29 +19,14 @@
 require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
 
 describe TermsController do
-  before(:all) do
-    EnrollmentTerm.class_eval do
-      alias_method :old_touch_all_courses, :touch_all_courses
-      def touch_all_courses
-        $touch_all_courses_count ||= 0
-        $touch_all_courses_count = $touch_all_courses_count + 1
-      end
-    end
-  end
-
-  after(:all) do
-    EnrollmentTerm.class_eval do
-      alias_method :touch_all_courses, :old_touch_all_courses
-    end
-  end
-
   it "should only touch courses once when setting overrides" do
     a = Account.default
-    u = user(:active_all => true)
-    a.add_user(u)
+    u = user_factory(active_all: true)
+    a.account_users.create!(user: u)
     user_session(@user)
 
     term = a.default_enrollment_term
+    term.any_instantiation.expects(:touch_all_courses).once
 
     put 'update', :account_id => a.id, :id => term.id, :enrollment_term => {:start_at => 1.day.ago, :end_at => 1.day.from_now,
         :overrides => {
@@ -49,8 +34,43 @@ describe TermsController do
           :teacher_enrollment => { :start_at => 1.day.ago, :end_at => 1.day.from_now},
           :ta_enrollment => { :start_at => 1.day.ago, :end_at => 1.day.from_now},
       }}
-
-    $touch_all_courses_count.should == 1
   end
 
+  it "should not be able to delete a default term" do
+    account_model
+    account_admin_user(:account => @account)
+    user_session(@user)
+
+    delete 'destroy', :account_id => @account.id, :id => @account.default_enrollment_term.id
+
+    expect(response).to_not be_success
+    error = json_parse(response.body)["errors"]["workflow_state"].first["message"]
+    expect(error).to eq "Cannot delete the default term"
+  end
+
+  it "should not be able to delete an enrollment term with active courses" do
+    account_model
+    account_admin_user(:account => @account)
+    user_session(@user)
+
+    @term = @account.enrollment_terms.create!
+    course_factory account: @account
+    @course.enrollment_term = @term
+    @course.save!
+
+    delete 'destroy', :account_id => @account.id, :id => @term.id
+
+    expect(response).to_not be_success
+    error = json_parse(response.body)["errors"]["workflow_state"].first["message"]
+    expect(error).to eq "Cannot delete a term with active courses"
+
+    @course.destroy
+
+    delete 'destroy', :account_id => @account.id, :id => @term.id
+
+    expect(response).to be_success
+
+    @term.reload
+    expect(@term).to be_deleted
+  end
 end

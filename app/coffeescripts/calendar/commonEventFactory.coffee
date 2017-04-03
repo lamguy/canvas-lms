@@ -2,26 +2,32 @@ define [
   'jquery'
   'compiled/calendar/CommonEvent'
   'compiled/calendar/CommonEvent.Assignment',
+  'compiled/calendar/CommonEvent.AssignmentOverride'
   'compiled/calendar/CommonEvent.CalendarEvent'
   'compiled/str/splitAssetString'
-], ($, CommonEvent, Assignment, CalendarEvent, splitAssetString) ->
+], ($, CommonEvent, Assignment, AssignmentOverride, CalendarEvent, splitAssetString) ->
 
   (data, contexts) ->
     if data == null
       obj = new CommonEvent()
       obj.allPossibleContexts = contexts
+      obj.can_change_context = true
       return obj
 
     actualContextCode = data.context_code
     contextCode = data.effective_context_code || actualContextCode
 
-    type = null
-    if data.assignment || data.assignment_group_id
-      type = 'assignment'
+    type = if data.assignment_overrides
+      'assignment_override'
+    else if  data.assignment || data.assignment_group_id
+      'assignment'
     else
-      type = 'calendar_event'
+      'calendar_event'
 
-    data = data.assignment || data.calendar_event || data
+    data = if data.assignment_overrides
+      {assignment: data.assignment, assignment_override: data.assignment_overrides[0]}
+    else
+      data.assignment || data.calendar_event || data
     return null if data.hidden # e.g. parent event of section-level events
     actualContextCode ?= data.context_code
     contextCode ?= data.effective_context_code || data.context_code
@@ -31,6 +37,14 @@ define [
       if context.asset_string == contextCode
         contextInfo = context
         break
+
+    # match one of a multi-context event
+    if contextInfo == null && contextCode && contextCode.indexOf(',') >= 0
+      contextCodes = contextCode.split(',')
+      for context in contexts
+        if contextCodes.indexOf(context.asset_string) >= 0
+          contextInfo = context
+          break
 
     # If we can't find the context, then we're not sure
     # how to handle or display this, so we ditch it.
@@ -43,6 +57,8 @@ define [
 
     if type == 'assignment'
       obj = new Assignment(data, contextInfo)
+    else if type == 'assignment_override'
+      obj = new AssignmentOverride(data, contextInfo)
     else
       obj = new CalendarEvent(data, contextInfo, actualContextInfo)
 
@@ -52,6 +68,8 @@ define [
     # the following assumptions:
     obj.can_edit = false
     obj.can_delete = false
+    obj.can_change_context = false
+
     # If the user can create an event in a context, they can also edit/delete
     # any events in that context.
     if contextInfo.can_create_calendar_events
@@ -67,8 +85,17 @@ define [
     if obj.object.appointment_group_id && contextInfo.can_create_calendar_events
       obj.can_edit = true
 
-    # always link to the main assignment page
-    if type == 'assignment'
-      obj.can_edit = true
+    # frozen assignments can't be deleted
+    if obj.assignment?.frozen
+      obj.can_delete = false
+
+    # events can be moved to a different calendar in limited circumstances
+    if type == 'calendar_event'
+      unless obj.object.appointment_group_id || obj.object.parent_event_id ||
+             obj.object.child_events_count || obj.object.effective_context_code
+        obj.can_change_context = true
+
+    # disable fullcalendar.js dragging unless the user has permissions
+    obj.editable = false unless obj.can_edit
 
     obj

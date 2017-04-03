@@ -19,10 +19,11 @@
 module SendToStream
   module SendToStreamClassMethods
     def self.extended(klass)
-      klass.send(:class_inheritable_accessor, :send_to_stream_block)
-      klass.send(:class_inheritable_accessor, :send_to_stream_update_block)
+      klass.send(:class_attribute, :send_to_stream_block)
+      klass.send(:class_attribute, :send_to_stream_update_block)
+      klass.has_one :stream_item, :as => :asset
     end
- 
+
     def on_create_send_to_streams(&block)
       self.send_to_stream_block = block
       after_create :queue_create_stream_items
@@ -43,12 +44,8 @@ module SendToStream
       block = self.class.send_to_stream_block rescue nil
       stream_recipients = Array(self.instance_eval(&block)) if block
       if stream_recipients && !stream_recipients.empty?
-        if ENV['RAILS_ENV'] == 'production'
-          send_later_enqueue_args(:create_stream_items,
-                                  :priority => Delayed::LOW_PRIORITY)
-        else
-          create_stream_items
-        end
+        send_later_if_production_enqueue_args(:create_stream_items,
+                                              :priority => Delayed::LOW_PRIORITY)
       end
       true
     end
@@ -59,10 +56,8 @@ module SendToStream
       stream_recipients = Array(self.instance_eval(&block)) if block
       generate_stream_items(stream_recipients) if stream_recipients
     rescue => e
-      if ENV['RAILS_ENV'] == 'production'
-        ErrorReport.log_exception(:default, e, {
-          :message => "SendToStream failure",
-        })
+      if Rails.env.production?
+        Canvas::Errors.capture(e, {message: "SendToStream failure" })
       else
         raise
       end
@@ -79,29 +74,17 @@ module SendToStream
       block = self.class.send_to_stream_update_block
       stream_recipients = Array(self.instance_eval(&block)) if block
       if stream_recipients && !stream_recipients.empty?
-        if ENV['RAILS_ENV'] == 'production'
-          send_later_enqueue_args(:generate_stream_items,
-                                  { :priority => Delayed::LOW_PRIORITY },
-                                  stream_recipients)
-        else
-          generate_stream_items(stream_recipients)
-        end
+        send_later_if_production_enqueue_args(:generate_stream_items,
+                                              { :priority => Delayed::LOW_PRIORITY },
+                                              stream_recipients)
         true
       end
     rescue => e
-      ErrorReport.log_exception(:default, e, {
-        :message => "SendToStream failure",
-      }) if ENV['RAILS_ENV'] == 'production'
+      Canvas::Errors.capture(e, { message: "SendToStream failure" })
       true
     end
-    
-    def generated_stream_items
-      @generated_stream_items
-    end
-    
-    def stream_item_recipient_ids
-      @stream_item_recipient_ids
-    end
+
+    attr_reader :generated_stream_items, :stream_item_recipient_ids
 
     def stream_item_inactive?
       (self.respond_to?(:workflow_state) && self.workflow_state == 'deleted') || (self.respond_to?(:deleted?) && self.deleted?)
@@ -113,7 +96,8 @@ module SendToStream
     
     def clear_stream_items
       # We need to pass the asset_string, not the asset itself, since we're about to delete the asset
-      StreamItem.send_later_if_production(:delete_all_for, StreamItem.root_object(self).asset_string, self.asset_string)
+      root_object = StreamItem.root_object(self)
+      StreamItem.send_later_if_production(:delete_all_for, [root_object.class.base_class.name, root_object.id], [self.class.base_class.name, self.id])
     end
   end
  

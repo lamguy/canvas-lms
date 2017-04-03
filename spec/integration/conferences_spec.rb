@@ -16,20 +16,11 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
+require File.expand_path(File.dirname(__FILE__) + '/../sharding_spec_helper')
 
-describe ConferencesController, :type => :integration do
-  before(:all) do
-    WebConference.instance_eval do
-      def plugins
-        [OpenObject.new(:id => "wimba", :settings => {:domain => "wimba.test"}, :valid_settings? => true, :enabled? => true)]
-      end
-    end
-  end
-  after(:all) do
-    WebConference.instance_eval do
-      def plugins; Canvas::Plugin.all_for_tag(:web_conferencing); end
-    end
+describe ConferencesController, type: :request do
+  before do
+    WebConference.stubs(:plugins).returns([web_conference_plugin_mock("wimba", {:domain => "wimba.test"})])
   end
 
   it "should notify participants" do
@@ -41,34 +32,34 @@ describe ConferencesController, :type => :integration do
     @student1.register!
     @student2 = student_in_course(:active_all => true, :user => user_with_pseudonym(:username => "student2@example.com")).user
     @student2.register!
+    [@teacher, @student1, @student2].each {|u| u.email_channel.confirm!}
 
     post "/courses/#{@course.id}/conferences", { :web_conference => {"duration"=>"60", "conference_type"=>"Wimba", "title"=>"let's chat", "description"=>""}, :user => { "all" => "1" } }
-    response.should be_redirect
+    expect(response).to be_redirect
     @conference = WebConference.first
-    Set.new(Message.all.map(&:user)).should == Set.new([@teacher, @student1, @student2])
+    expect(Set.new(Message.all.map(&:user))).to eq Set.new([@teacher, @student1, @student2])
 
     @student3 = student_in_course(:active_all => true, :user => user_with_pseudonym(:username => "student3@example.com")).user
     @student3.register!
+    @student3.email_channel.confirm!
     put "/courses/#{@course.id}/conferences/#{@conference.id}", { :web_conference => { "title" => "moar" }, :user => { @student3.id => '1' } }
-    response.should be_redirect
-    Set.new(Message.all.map(&:user)).should == Set.new([@teacher, @student1, @student2, @student3])
+    expect(response).to be_redirect
+    expect(Set.new(Message.all.map(&:user))).to eq Set.new([@teacher, @student1, @student2, @student3])
   end
 
-  it "should render the correct conferences for group news feed" do
+  it "should find the correct conferences for group news feed" do
     course_with_student_logged_in(:active_all => true, :user => user_with_pseudonym)
     @group = @course.groups.create!(:name => "some group")
     @group.add_user(@user)
 
-    course_conference = @course.web_conferences.create!(:conference_type => 'Wimba') { |c| c.start_at = Time.now }
-    group_conference = @group.web_conferences.create!(:conference_type => 'Wimba') { |c| c.start_at = Time.now }
+    course_conference = @course.web_conferences.create!(:conference_type => 'Wimba', :user => @user) { |c| c.start_at = Time.now }
+    group_conference = @group.web_conferences.create!(:conference_type => 'Wimba', :user => @user) { |c| c.start_at = Time.now }
     course_conference.add_initiator(@user)
     group_conference.add_initiator(@user)
 
     get "/courses/#{@course.id}/groups/#{@group.id}"
-    response.should be_success
-
-    response.body.should_not match(/conference_#{course_conference.id}/)
-    response.body.should match(/conference_#{group_conference.id}/)
+    expect(response).to be_success
+    expect(assigns['current_conferences'].map(&:id)).to eq [group_conference.id]
   end
 
   it "shouldn't show concluded users" do
@@ -82,14 +73,34 @@ describe ConferencesController, :type => :integration do
     @student2 = @enroll2.user
     @student2.register!
 
-    @enroll1.attributes['workflow_state'].should == 'active' 
-    @enroll2.attributes['workflow_state'].should == 'active' 
+    expect(@enroll1.attributes['workflow_state']).to eq 'active'
+    expect(@enroll2.attributes['workflow_state']).to eq 'active'
     @enroll2.update_attributes('workflow_state' => 'completed')
-    @enroll2.attributes['workflow_state'].should == 'completed'
+    expect(@enroll2.attributes['workflow_state']).to eq 'completed'
 
     get "/courses/#{@course.id}/conferences"
-    assigns['users'].member?(@teacher).should be_false
-    assigns['users'].member?(@student1).should be_true
-    assigns['users'].member?(@student2).should be_false
+    expect(assigns['users'].member?(@teacher)).to be_falsey
+    expect(assigns['users'].member?(@student1)).to be_truthy
+    expect(assigns['users'].member?(@student2)).to be_falsey
+  end
+
+  context 'sharding' do
+    specs_require_sharding
+
+    it "should work with cross-shard invitees" do
+      @shard1.activate do
+        @student = user_factory(active_all: true)
+      end
+      course_with_teacher(:active_all => true)
+      @course.enroll_student(@student).accept!
+
+      course_conference = @course.web_conferences.create!(:conference_type => 'Wimba', :user => @teacher) { |c| c.start_at = Time.now }
+      course_conference.add_invitee(@student)
+
+      user_session(@student)
+      get "/courses/#{@course.id}/conferences"
+
+      expect(assigns["new_conferences"].map(&:id)).to include(course_conference.id)
+    end
   end
 end

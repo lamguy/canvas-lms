@@ -1,4 +1,6 @@
-class AddDelayedJobsMaxAttempts < ActiveRecord::Migration
+class AddDelayedJobsMaxAttempts < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.connection
     Delayed::Backend::ActiveRecord::Job.connection
   end

@@ -1,4 +1,6 @@
-class DropOldSisStickyColumns < ActiveRecord::Migration
+class DropOldSisStickyColumns < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     remove_column :abstract_courses, :sis_name
     remove_column :abstract_courses, :sis_course_code

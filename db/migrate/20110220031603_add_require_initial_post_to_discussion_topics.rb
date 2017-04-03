@@ -1,4 +1,6 @@
-class AddRequireInitialPostToDiscussionTopics < ActiveRecord::Migration
+class AddRequireInitialPostToDiscussionTopics < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     add_column :discussion_topics, :require_initial_post, :boolean
   end

@@ -18,6 +18,8 @@
 
 require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
 
+require 'nokogiri'
+
 describe "user asset accesses" do
   before(:each) do
     Setting.set('enable_page_views', 'db')
@@ -52,36 +54,42 @@ describe "user asset accesses" do
 
     user_session(@student)
     get "/courses/#{@course.id}/assignments/#{assignment.id}"
-    response.should be_success
+    expect(response).to be_success
 
     user_session(@teacher)
     get "/courses/#{@course.id}/users/#{@student.id}/usage"
-    response.should be_success
+    expect(response).to be_success
     html = Nokogiri::HTML(response.body)
-    html.css('#usage_report .access.assignment').length.should == 1
-    html.css('#usage_report .access.assignment .readable_name').text.strip.should == 'Assignment 1'
-    html.css('#usage_report .access.assignment .view_score').text.strip.should == '1'
-    html.css('#usage_report .access.assignment .last_viewed').text.strip.should == datetime_string(now)
-    AssetUserAccess.first(:conditions => { :user_id => @student.id }).last_access.to_i.should == now.to_i
+    expect(html.css('#usage_report .access.assignment').length).to eq 1
+    expect(html.css('#usage_report .access.assignment .readable_name').text.strip).to eq 'Assignment 1'
+    expect(html.css('#usage_report .access.assignment .view_score').text.strip).to eq '1'
+    expect(html.css('#usage_report .access.assignment .last_viewed').text.strip).to eq datetime_string(now)
+    expect(AssetUserAccess.where(:user_id => @student).first.last_access.to_i).to eq now.to_i
 
     now2 = now + 1.hour
     Time.stubs(:now).returns(now2)
 
     # make sure that we're not using the uodated_at time as the time of the access
-    AssetUserAccess.update_all({ :updated_at => now2 + 5.hours }, { :user_id => @student.id })
+    AssetUserAccess.where(:user_id => @student).update_all(:updated_at => now2 + 5.hours)
 
     user_session(@student)
     get "/courses/#{@course.id}/assignments/#{assignment.id}"
-    response.should be_success
+    expect(response).to be_success
 
     user_session(@teacher)
     get "/courses/#{@course.id}/users/#{@student.id}/usage"
-    response.should be_success
+    expect(response).to be_success
     html = Nokogiri::HTML(response.body)
-    html.css('#usage_report .access.assignment').length.should == 1
-    html.css('#usage_report .access.assignment .readable_name').text.strip.should == 'Assignment 1'
-    html.css('#usage_report .access.assignment .view_score').text.strip.should == '2'
-    html.css('#usage_report .access.assignment .last_viewed').text.strip.should == datetime_string(now2)
-    AssetUserAccess.first(:conditions => { :user_id => @student.id }).last_access.to_i.should == now2.to_i
+    expect(html.css('#usage_report .access.assignment').length).to eq 1
+    expect(html.css('#usage_report .access.assignment .readable_name').text.strip).to eq 'Assignment 1'
+    expect(html.css('#usage_report .access.assignment .view_score').text.strip).to eq '2'
+    expect(html.css('#usage_report .access.assignment .last_viewed').text.strip).to eq datetime_string(now2)
+    expect(AssetUserAccess.where(:user_id => @student).first.last_access.to_i).to eq now2.to_i
+  end
+
+  it "should record user names when viewing profiles" do
+    user_session(@student)
+    get "/courses/#{@course.id}/users/#{@teacher.id}"
+    expect(AssetUserAccess.where(:user_id => @student).first.display_name).to eq @teacher.name
   end
 end

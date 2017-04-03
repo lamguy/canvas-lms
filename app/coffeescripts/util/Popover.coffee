@@ -1,53 +1,88 @@
-
 define [
-  # 'jquery'
-], () ->
+  'jquery'
+], ($) ->
+
+
+  # you can provide a 'using' option to jqueryUI position
+  # it will be passed the position cordinates and a feedback object which,
+  # among other things, tells you where it positioned it relative to the target. we use it to add some
+  # css classes that handle putting the pointer triangle (aka: caret) back to the trigger.
+  using = ( position, feedback ) ->
+    position.top = 0 if position.top < 0
+    $( this )
+      .css( position )
+      .toggleClass('carat-bottom', feedback.vertical == 'bottom')
+
+
 
   idCounter = 0
   activePopovers = []
 
   class Popover
-    constructor: (clickEvent, @content) ->
-      @trigger = $(clickEvent.currentTarget)
+    constructor: (triggerEvent, @content, @options = {}) ->
+      @trigger = $(triggerEvent.currentTarget)
+      @triggerAction = triggerEvent.type
       @el = $(@content)
               .addClass('carat-bottom')
-              .attr( "role", "dialog" )
               .data('popover', this)
-              .keyup (event) =>
-                @hide() if event.keyCode is $.ui.keyCode.ESCAPE
-      @el.delegate '.popover_close', 'click', (event) =>
+              .keydown (event) =>
+                # if the user hits the escape key, reset the focus to what it was.
+                if event.keyCode is $.ui.keyCode.ESCAPE
+                  @hide()
+                # If the user tabs or shift-tabs away, close.
+                return unless event.keyCode is $.ui.keyCode.TAB
+                tabbables = $ ":tabbable", @el
+                index = $.inArray event.target, tabbables
+                return if index == -1
+
+                if event.shiftKey
+                  @hide() if index == 0
+                else
+                  @hide() if index == tabbables.length-1
+
+      @el.delegate '.popover_close', 'keyclick click', (event) =>
         event.preventDefault()
         @hide()
 
-      @show(clickEvent)
+      @show(triggerEvent)
 
-    show: (clickEvent) ->
+    show: (triggerEvent) ->
+      # when the popover is open, we don't want SR users to be able to navigate to the flash messages
+      $.screenReaderFlashMessageExclusive('')
+
       popoverToHide.hide() while popoverToHide = activePopovers.pop()
       activePopovers.push(this)
       id = "popover-#{idCounter++}"
       @trigger.attr
-        "aria-haspopup" : true
-        "aria-owns" : id
+        "aria-expanded" : true
+        "aria-controls" : id
+      @previousTarget = triggerEvent.currentTarget
 
       @el
-        .attr({
+        .attr(
           'id' : id
-          'aria-hidden' : false
-          'aria-expanded' : true
-        })
+        )
         .appendTo(document.body)
         .show()
-      @el.find(':tabbable').not('.popover_close').first().focus(1)
       @position()
+      unless triggerEvent.type == "mouseenter"
+        @el.find(':tabbable').first().focus()
+        setTimeout(
+          () =>
+            @el.find(':tabbable').first().focus()
+          , 100
+        )
 
-      # handle sticking the carat right above where you clicked on the button
+      document.querySelector('#application').setAttribute('aria-hidden', 'true')
+
+      # handle sticking the carat right above where you clicked on the button, bounded by the dialog
       @el.find(".ui-menu-carat").remove()
+      additionalOffset = @options.manualOffset || 0
       differenceInOffset = @trigger.offset().left - @el.offset().left
-      actualOffset = clickEvent.pageX - @trigger.offset().left
-      caratOffset = Math.min(
-        Math.max(20, actualOffset),
-        @trigger.width() - 20
-      ) + differenceInOffset
+      actualOffset = triggerEvent.pageX - @trigger.offset().left
+      leftBound = Math.max(0, @trigger.width() / 2 - @el.width() / 2) + 20
+      rightBound = @trigger.width() - leftBound
+      caratOffset = Math.min(Math.max(leftBound, actualOffset), rightBound) + differenceInOffset + additionalOffset
       $('<span class="ui-menu-carat"><span /></span>').css('left', caratOffset).prependTo(@el)
 
       @positionInterval = setInterval @position, 200
@@ -59,8 +94,13 @@ define [
         activePopovers.splice(index, 1) if this is popover
 
       @el.detach()
+      @trigger.attr 'aria-expanded', false
       clearInterval @positionInterval
       $(window).unbind 'click', @outsideClickHandler
+      @restoreFocus()
+
+      if activePopovers.length == 0
+        document.querySelector('#application').setAttribute('aria-hidden', 'false')
 
     ignoreOutsideClickSelector: '.ui-dialog'
 
@@ -71,9 +111,18 @@ define [
 
     position: =>
       @el.position
-        my: 'center bottom',
-        at: 'center top',
+        my: 'center '+(if @options.verticalSide == 'bottom' then 'top' else 'bottom'),
+        at: 'center '+(@options.verticalSide || 'top'),
         of: @trigger,
-        offset: '0 -10px',
-        within: '#main',
-        collision: 'fit fit'
+        offset: "0px #{@offsetPx()}px",
+        within: 'body',
+        collision: 'flipfit '+(if @options.verticalSide then 'none' else 'flipfit')
+        using: using
+
+    offsetPx: ->
+      offset = if @options.verticalSide == 'bottom' then 10 else -10
+      if @options.invertOffset then (offset * -1) else offset
+
+    restoreFocus: ->
+      # set focus back to the previously focused item.
+      @previousTarget.focus() if @previousTarget and $(@previousTarget).is(':visible')

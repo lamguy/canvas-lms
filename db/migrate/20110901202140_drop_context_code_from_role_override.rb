@@ -1,4 +1,6 @@
-class DropContextCodeFromRoleOverride < ActiveRecord::Migration
+class DropContextCodeFromRoleOverride < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     remove_index :role_overrides, :context_code
     remove_column :role_overrides, :context_code

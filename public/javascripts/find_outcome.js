@@ -1,11 +1,11 @@
 define([
   'i18n!find_outcome',
   'jquery' /* $ */,
+  'compiled/str/TextHelper',
   'jquery.ajaxJSON' /* ajaxJSON */,
   'jqueryui/dialog',
-  'jquery.instructure_misc_helpers' /* truncateText */,
   'jquery.templateData' /* fillTemplateData, getTemplateData */
-], function(I18n, $) {
+], function(I18n, $, TextHelper) {
 
 var find_outcome = (function() {
   return {
@@ -16,7 +16,7 @@ var find_outcome = (function() {
       if(!$dialog.hasClass('loaded')) {
         $dialog.find(".loading_message").text(I18n.t('messages.loading_outcomes', "Loading Outcomes..."));
         $.ajaxJSON($dialog.find(".outcomes_list_url").attr('href'), 'GET', {}, function(data) {
-          valids = [];
+          var valids = [];
           for(var idx in data) {
             var outcome = data[idx].learning_outcome;
             if(!options.for_rubric || (outcome.data && outcome.data.rubric_criterion)) {
@@ -42,7 +42,7 @@ var find_outcome = (function() {
               outcome.title = outcome.short_description;
               var $text = $("<div/>");
               $text.text(outcome.short_description);
-              outcome.title = $.truncateText($.trim($text.text()), 35);
+              outcome.title = TextHelper.truncateText($.trim($text.text()), {max: 35});
               outcome.display_name = outcome.cached_context_short_name || "";
               $name.fillTemplateData({data: outcome});
               $dialog.find(".outcomes_selects").append($name.show());
@@ -73,15 +73,9 @@ var find_outcome = (function() {
           $dialog.find(".loading_message").text(I18n.t('errors.outcome_retrieval_failed', "Outcomes Retrieval failed unexpected.  Please try again."));
         });
       }
-      var find_outcome_title;
-      if (options.for_rubric) {
-        find_outcome_title = I18n.t('titles.find_outcome_criterion', "Find Outcome Criterion");
-      } else {
-        find_outcome_title = I18n.t('titles.find_outcome', "Find Outcome");
-      }
       $dialog.dialog({
         modal: true,
-        title: find_outcome_title,
+        title: I18n.t('titles.find_outcome', "Find Outcome"),
         width: 700,
         height: 400
       });

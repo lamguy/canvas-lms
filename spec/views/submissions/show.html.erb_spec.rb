@@ -20,14 +20,103 @@ require File.expand_path(File.dirname(__FILE__) + '/../../spec_helper')
 require File.expand_path(File.dirname(__FILE__) + '/../views_helper')
 
 describe "/submissions/show" do
+  before :once do
+    course_with_student(active_all: true)
+  end
+
   it "should render" do
-    course_with_student
     view_context
     a = @course.assignments.create!(:title => "some assignment")
-    assigns[:assignment] = a
-    assigns[:submission] = a.submit_homework(@user)
+    assign(:assignment, a)
+    assign(:submission, a.submit_homework(@user))
     render "submissions/show"
-    response.should_not be_nil
+    expect(response).not_to be_nil
+  end
+
+  context 'when assignment has a rubric' do
+    before :once do
+      assignment_model
+      rubric_association_model association_object: @assignment, purpose: 'grading'
+      @submission = @assignment.submit_homework(@user)
+    end
+
+    context 'when current_user is submission user' do
+      it 'does not add assessing class to rendered rubric_container' do
+        view_context(@course, @student)
+        assign(:assignment, @assignment)
+        assign(:submission, @submission)
+        render 'submissions/show'
+        html = Nokogiri::HTML.fragment(response.body)
+        classes = html.css('div.rubric_container').attribute('class').value.split(' ')
+        expect(classes).not_to include('assessing')
+      end
+    end
+
+    context 'when current_user is teacher' do
+      it 'adds assessing class to rubric_container' do
+        view_context(@course, @teacher)
+        assign(:assignment, @assignment)
+        assign(:submission, @submission)
+        render 'submissions/show'
+        html = Nokogiri::HTML.fragment(response.body)
+        classes = html.css('div.rubric_container').attribute('class').value.split(' ')
+        expect(classes).to include('assessing')
+      end
+    end
+
+    context 'when current_user is an observer' do
+      before :once do
+        course_with_observer(course: @course)
+      end
+
+      it 'does not add assessing class to the rendered rubric_container' do
+        view_context(@course, @observer)
+        assign(:assignment, @assignment)
+        assign(:submission, @submission)
+        render 'submissions/show'
+        html = Nokogiri::HTML.fragment(response.body)
+        classes = html.css('div.rubric_container').attribute('class').value.split(' ')
+        expect(classes).not_to include('assessing')
+      end
+    end
+
+    context 'when current user is assessing student submission' do
+      before :once do
+        student_in_course(active_all: true)
+        @course.workflow_state = 'available'
+        @course.save!
+        @assessment_request = @submission.assessment_requests.create!(
+          assessor: @student,
+          assessor_asset: @submission.user,
+          user: @submission.user
+        )
+      end
+
+      it 'shows the "Show Rubric" link after request is complete' do
+        @assessment_request.complete!
+
+        view_context(@course, @student)
+        assign(:assignment, @assignment)
+        assign(:submission, @submission)
+        assign(:rubric_association, @submission.rubric_association_with_assessing_user_id)
+
+        render 'submissions/show'
+        html = Nokogiri::HTML.fragment(response.body)
+        rubric_link_text = html.css('.assess_submission_link')[0].text
+        expect(rubric_link_text).to match(/Show Rubric/)
+      end
+
+      it 'adds assessing class to rubric_container' do
+        view_context(@course, @student)
+        assign(:assignment, @assignment)
+        assign(:submission, @submission)
+        assign(:assessment_request, @assessment_request)
+        render 'submissions/show'
+        html = Nokogiri::HTML.fragment(response.body)
+        classes = html.css('div.rubric_container').attribute('class').value.split(' ')
+        expect(classes).to include('assessing')
+      end
+    end
   end
 end
 

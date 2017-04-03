@@ -1,4 +1,6 @@
-class AddRestrictionOptionsToCoursesAndSections < ActiveRecord::Migration
+class AddRestrictionOptionsToCoursesAndSections < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     add_column :courses, :restrict_enrollments_to_course_dates, :boolean
     add_column :course_sections, :restrict_enrollments_to_section_dates, :boolean

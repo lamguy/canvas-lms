@@ -21,9 +21,8 @@
 class DiscussionTopic::MaterializedView < ActiveRecord::Base
   include Api::V1::DiscussionTopics
   include Api
-  include ActionController::UrlWriter
-
-  attr_accessible :discussion_topic
+  include Rails.application.routes.url_helpers
+  def use_placeholder_host?; true; end
 
   serialize :participants_array, Array
   serialize :entry_ids_array, Array
@@ -35,8 +34,20 @@ class DiscussionTopic::MaterializedView < ActiveRecord::Base
   end
 
   def self.for(discussion_topic)
-    self.find_by_discussion_topic_id(discussion_topic.id) ||
-      self.create!(:discussion_topic => discussion_topic)
+    discussion_topic.shard.activate do
+      # first try to pull the view from the slave. we can't just do this in the
+      # unique_constraint_retry since it begins a transaction.
+      view = Shackles.activate(:slave) { self.where(discussion_topic_id: discussion_topic).first }
+      if !view
+        # if the view wasn't found, drop into the unique_constraint_retry
+        # transaction loop on master.
+        unique_constraint_retry do
+          view = self.where(discussion_topic_id: discussion_topic).first ||
+            self.create!(:discussion_topic => discussion_topic)
+        end
+      end
+      view
+    end
   end
 
   def self.materialized_view_for(discussion_topic, opts = {})
@@ -46,6 +57,14 @@ class DiscussionTopic::MaterializedView < ActiveRecord::Base
 
   def up_to_date?
     updated_at.present? && updated_at >= discussion_topic.updated_at && json_structure.present?
+  end
+
+  def all_entries
+    if self.discussion_topic.sort_by_rating
+      self.discussion_topic.rated_discussion_entries
+    else
+      self.discussion_topic.discussion_entries
+    end
   end
 
   # this view is eventually consistent -- once we've generated the view, we
@@ -66,13 +85,16 @@ class DiscussionTopic::MaterializedView < ActiveRecord::Base
       entry_ids = self.entry_ids_array
 
       if opts[:include_new_entries]
-        new_entries = discussion_topic.discussion_entries.all(:conditions => ["updated_at >= ?", (self.generation_started_at || self.updated_at)])
+        @for_mobile = true if opts[:include_mobile_overrides]
+
+        new_entries = all_entries.where("updated_at >= ?", (self.generation_started_at || self.updated_at)).to_a
         participant_ids = (Set.new(participant_ids) + new_entries.map(&:user_id).compact + new_entries.map(&:editor_id).compact).to_a
         entry_ids = (Set.new(entry_ids) + new_entries.map(&:id)).to_a
-        new_entries_json_structure = discussion_entry_api_json(new_entries, discussion_topic.context, nil, nil, []).to_json
+        new_entries_json_structure = discussion_entry_api_json(new_entries, discussion_topic.context, nil, nil, [])
       else
-        new_entries_json_structure = [].to_json
+        new_entries_json_structure = []
       end
+
       return self.json_structure, participant_ids, entry_ids, new_entries_json_structure
     else
       return nil
@@ -90,26 +112,46 @@ class DiscussionTopic::MaterializedView < ActiveRecord::Base
   end
 
   handle_asynchronously :update_materialized_view,
-    :singleton => proc { |o| "materialized_discussion:#{ Shard.default.activate { o.discussion_topic_id } }" }
+    :singleton => proc { |o| "materialized_discussion:#{ Shard.birth.activate { o.discussion_topic_id } }" },
+    :run_at => proc { 10.seconds.from_now } # delay for replication to slave
 
   def build_materialized_view
     entry_lookup = {}
     view = []
     user_ids = Set.new
-    discussion_entries = self.discussion_topic.discussion_entries
-    discussion_entries.find_each do |entry|
-      json = discussion_entry_api_json([entry], discussion_topic.context, nil, nil, []).first
-      entry_lookup[entry.id] = json
-      user_ids << entry.user_id
-      user_ids << entry.editor_id if entry.editor_id
-      if parent = entry_lookup[entry.parent_id]
-        parent['replies'] ||= []
-        parent['replies'] << json
-      else
-        view << json
+    Shackles.activate(:slave) do
+      all_entries.find_each do |entry|
+        json = discussion_entry_api_json([entry], discussion_topic.context, nil, nil, []).first
+        entry_lookup[entry.id] = json
+        user_ids << entry.user_id
+        user_ids << entry.editor_id if entry.editor_id
+        if parent = entry_lookup[entry.parent_id]
+          parent['replies'] ||= []
+          parent['replies'] << json
+        else
+          view << json
+        end
       end
     end
+    StringifyIds.recursively_stringify_ids(view)
     return view.to_json, user_ids.to_a, entry_lookup.keys
+  end
+
+  def in_app?
+    !@for_mobile # default to non-mobileapp mode
+  end
+
+  def self.include_mobile_overrides(entries, overrides)
+    entries.each do |entry|
+      if entry["message"]
+        parsed_html = Nokogiri::HTML::DocumentFragment.parse(entry["message"])
+        Api::Html::Content.add_overrides_to_html(parsed_html, overrides)
+        entry["message"] = parsed_html.to_s
+      end
+      if entry["replies"]
+        include_mobile_overrides(entry["replies"], overrides)
+      end
+    end
   end
 end
 

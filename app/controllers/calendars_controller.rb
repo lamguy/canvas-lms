@@ -17,62 +17,39 @@
 #
 
 class CalendarsController < ApplicationController
-  before_filter :require_user, :except => [ :public_feed ]
-  before_filter :check_preferred_calendar, :only => [ :show, :show2 ]
-
-  def show
-    get_context
-    if @context != @current_user
-      # we used to have calendar pages under contexts, like
-      # /courses/X/calendar, but these all redirect to /calendar now.
-      # we shouldn't have any of these URLs anymore, but let's leave in this
-      # fail-safe in case somebody has a bookmark or something.
-      return redirect_to(calendar_url_for([@context]))
-    end
-    get_all_pertinent_contexts(true) # passing true has it return groups too.
-    build_calendar_dates
-
-    respond_to do |format|
-      format.html do
-        @events = []
-        @undated_events = []
-        @show_left_side = false
-        @calendar_event = @contexts[0].calendar_events.new
-        @contexts.each do |context|
-          log_asset_access("dashboard_calendar:#{context.asset_string}", "calendar", 'other')
-        end
-        render :action => "show"
-      end
-      # this  unless @dont_render_again stuff is ugly but I wanted to send back a 304 but it started giving me "Double Render errors"
-      format.json do
-        events = calendar_events_for_request_format
-        render :json => events unless @dont_render_again
-      end
-      format.ics {
-        events = calendar_events_for_request_format
-        render :text => events unless @dont_render_again
-      }
-    end
-  end
+  before_action :require_user, :except => [ :public_feed ]
 
   def show2
     get_context
-    get_all_pertinent_contexts(true) # passing true has it return groups too.
+    get_all_pertinent_contexts(include_groups: true, favorites_first: true)
     @manage_contexts = @contexts.select{|c| c.grants_right?(@current_user, session, :manage_calendar) }.map(&:asset_string)
     @feed_url = feeds_calendar_url((@context_enrollment || @context).feed_code)
-    @selected_contexts = params[:include_contexts].split(",") if params[:include_contexts]
-    if params[:event_id] && (event = CalendarEvent.find_by_id(params[:event_id])) && event.start_at
+    if params[:include_contexts]
+      @selected_contexts = params[:include_contexts].split(",")
+    elsif @current_user.preferences[:selected_calendar_contexts]
+      @selected_contexts = @current_user.preferences[:selected_calendar_contexts]
+    end
+    @wrap_titles = @domain_root_account && @domain_root_account.feature_enabled?(:wrap_calendar_event_titles)
+    # somewhere there's a bad link that doesn't separate parameters properly.
+    # make sure we don't do a find on a non-numeric id.
+    if params[:event_id] && params[:event_id] =~ Api::ID_REGEX && (event = CalendarEvent.where(id: params[:event_id]).first) && event.start_at
       @active_event_id = event.id
       @view_start = event.start_at.in_time_zone.strftime("%Y-%m-%d")
     end
     @contexts_json = @contexts.map do |context|
-      if context.respond_to? :appointment_groups
+      ag_permission = false
+      if context.respond_to?(:appointment_groups) && context.grants_right?(@current_user, session, :manage_calendar)
         ag = AppointmentGroup.new(:contexts => [context])
         ag.update_contexts_and_sub_contexts
-        can_create_ags = ag.grants_right? @current_user, session, :create
+        if ag.grants_right? @current_user, session, :create
+          ag_permission = {:all_sections => true}
+        else
+          section_ids = context.section_visibilities_for(@current_user).map { |v| v[:course_section_id] }
+          ag_permission = {:all_sections => false, :section_ids => section_ids} if section_ids.any?
+        end
       end
       info = {
-        :name => context.name,
+        :name => context.nickname_for(@current_user),
         :asset_string => context.asset_string,
         :id => context.id,
         :url => named_context_url(context, :context_url),
@@ -82,21 +59,29 @@ class CalendarsController < ApplicationController
         :new_calendar_event_url => context.respond_to?("calendar_events") ? named_context_url(context, :new_context_calendar_event_url) : '',
         :new_assignment_url => context.respond_to?("assignments") ? named_context_url(context, :new_context_assignment_url) : '',
         :calendar_event_url => context.respond_to?("calendar_events") ? named_context_url(context, :context_calendar_event_url, '{{ id }}') : '',
-        :assignment_url => context.respond_to?("assignments") ? named_context_url(context, :context_assignment_url, '{{ id }}') : '',
+        :assignment_url => context.respond_to?("assignments") ? named_context_url(context, :api_v1_context_assignment_url, '{{ id }}') : '',
+        :assignment_override_url => context.respond_to?(:assignments) ? api_v1_assignment_override_url(:course_id => context.id, :assignment_id => '{{ assignment_id }}', :id => '{{ id }}') : '',
         :appointment_group_url => context.respond_to?("appointment_groups") ? api_v1_appointment_groups_url(:id => '{{ id }}') : '',
-        :can_create_calendar_events => context.respond_to?("calendar_events") && context.calendar_events.new.grants_right?(@current_user, session, :create),
-        :can_create_assignments => context.respond_to?("assignments") && context.assignments.new.grants_right?(@current_user, session, :create),
-        :assignment_groups => context.respond_to?("assignments") ? context.assignment_groups.active.scoped(:select => "id, name").map {|g| { :id => g.id, :name => g.name } } : [],
-        :can_create_appointment_groups => can_create_ags
+        :can_create_calendar_events => context.respond_to?("calendar_events") && CalendarEvent.new.tap{|e| e.context = context}.grants_right?(@current_user, session, :create),
+        :can_create_assignments => context.respond_to?("assignments") && Assignment.new.tap{|a| a.context = context}.grants_right?(@current_user, session, :create),
+        :assignment_groups => context.respond_to?("assignments") ? context.assignment_groups.active.pluck(:id, :name).map {|id, name| { :id => id, :name => name } } : [],
+        :can_create_appointment_groups => ag_permission
       }
       if context.respond_to?("course_sections")
-        info[:course_sections] = context.course_sections.active.scoped(:select => "id, name").map {|cs| { :id => cs.id, :asset_string => cs.asset_string, :name => cs.name } }
+        info[:course_sections] = context.course_sections.active.pluck(:id, :name).map do |id, name|
+          hash = { :id => id, :asset_string => "course_section_#{id}", :name => name}
+          if ag_permission
+            hash[:can_create_ag] = ag_permission[:all_sections] || ag_permission[:section_ids].include?(id)
+          end
+          hash
+        end
       end
-      if info[:can_create_appointment_groups] && context.respond_to?("group_categories")
-        info[:group_categories] = context.group_categories.active.scoped(:select => "id, name").map {|gc| { :id => gc.id, :asset_string => gc.asset_string, :name => gc.name } }
+      if ag_permission && ag_permission[:all_sections] && context.respond_to?("group_categories")
+        info[:group_categories] = context.group_categories.active.pluck(:id, :name).map {|id, name| { :id => id, :asset_string => "group_category_#{id}", :name => name } }
       end
       info
     end
+    StringifyIds.recursively_stringify_ids(@contexts_json)
   end
 
   def build_calendar_events
@@ -149,7 +134,7 @@ class CalendarsController < ApplicationController
   end
   protected :calendar_events_for_request_format
 
-  def build_calendar_dates
+  def build_calendar_dates(event_to_focus)
     @today = Time.zone.today
 
     if params[:start_day] && params[:end_day]
@@ -165,10 +150,16 @@ class CalendarsController < ApplicationController
       end
       @current = Date.new(y = @year, m = @month, d = 1)
     else
-      @month = params[:month].to_i
-      @month = !@month || @month == 0 ? @today.month : @month
-      @year = params[:year].to_i
-      @year = !@year || @year == 0 ? @today.year : @year
+      if event_to_focus
+        use_start = event_to_focus.start_at.in_time_zone
+        @month = use_start.month
+        @year = use_start.year
+      else
+        @month = params[:month].to_i
+        @month = !@month || @month == 0 ? @today.month : @month
+        @year = params[:year].to_i
+        @year = !@year || @year == 0 ? @today.year : @year
+      end
 
       @first_day = Date.parse(params[:start_day]) if params[:start_day]
       @last_day = Date.parse(params[:end_day]) if params[:end_day]
@@ -184,76 +175,4 @@ class CalendarsController < ApplicationController
   end
   protected :build_calendar_dates
 
-
-  def public_feed
-    return unless get_feed_context
-    get_all_pertinent_contexts
-
-    @events = []
-    ActiveRecord::Base::ConnectionSpecification.with_environment(:slave) do
-      @contexts.each do |context|
-        @assignments = context.assignments.active.find(:all) if context.respond_to?("assignments")
-        @events.concat context.calendar_events.active.find(:all)
-        @events.concat @assignments || []
-        @events = @events.sort_by{ |e| [(e.start_at || Time.now), e.title] }
-      end
-    end
-    @contexts.each do |context|
-      log_asset_access("calendar_feed:#{context.asset_string}", "calendar", 'other')
-    end
-    respond_to do |format|
-      format.ics do
-        render :text => @events.to_ics(t('ics_title', "%{course_or_group_name} Calendar (Canvas)", :course_or_group_name => @context.name),
-          case
-            when @context.is_a?(Course)
-              t('ics_description_course', "Calendar events for the course, %{course_name}", :course_name => @context.name)
-            when @context.is_a?(Group)
-              t('ics_description_group', "Calendar events for the group, %{group_name}", :group_name => @context.name)
-            when @context.is_a?(User)
-              t('ics_description_user', "Calendar events for the user, %{user_name}", :user_name => @context.name)
-            else
-              t('ics_description', "Calendar events for %{context_name}", :context_name => @context.name)
-          end)
-      end
-      format.atom do
-        feed = Atom::Feed.new do |f|
-          f.title = t :feed_title, "%{course_or_group_name} Calendar Feed", :course_or_group_name => @context.name
-          f.links << Atom::Link.new(:href => calendar_url_for(@context), :rel => 'self')
-          f.updated = Time.now
-          f.id = calendar_url_for(@context)
-        end
-        @events.each do |e|
-          feed.entries << e.to_atom
-        end
-        render :text => feed.to_xml
-      end
-    end
-  end
-
-  def switch_calendar
-    if @domain_root_account.enable_scheduler?
-      if params[:preferred_calendar] == '2' &&
-        @current_user.preferences.delete(:use_calendar1)
-      else
-        @current_user.preferences[:use_calendar1] = true
-      end
-      @current_user.save!
-    end
-    check_preferred_calendar(true)
-  end
-
-  def check_preferred_calendar(always_redirect=false)
-    preferred_calendar = 'show'
-    preferred_calendar = 'show2' if @domain_root_account.enable_scheduler? && !@current_user.preferences[:use_calendar1]
-    if always_redirect || params[:action] != preferred_calendar
-      redirect_to({ :action => preferred_calendar, :anchor => ' ' }.merge(params.slice(:include_contexts, :event_id)))
-      return false
-    end
-    if @domain_root_account.enable_scheduler?
-      if preferred_calendar == 'show'
-        add_crumb @template.link_to(t(:use_new_calendar, "Try out the new calendar"), switch_calendar_url('2'), :method => :post), nil, :id => 'change_calendar_version_link_holder'
-      end
-    end
-  end
-  protected :check_preferred_calendar
 end

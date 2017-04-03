@@ -1,4 +1,6 @@
-class AddZipFileImports < ActiveRecord::Migration
+class AddZipFileImports < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     create_table :zip_file_imports do |t|
       t.string    :workflow_state

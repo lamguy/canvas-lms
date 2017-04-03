@@ -19,167 +19,153 @@
 require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
 
 describe CalendarEventsController do
+  before :once do
+    course_with_teacher(active_all: true)
+    student_in_course(active_all: true)
+    course_event
+  end
+
   def course_event
     @event = @course.calendar_events.create(:title => "some assignment")
   end
 
   describe "GET 'show'" do
     it "should require authorization" do
-      course_with_student(:active_all => true)
-      course_event
       get 'show', :course_id => @course.id, :id => @event.id
       assert_unauthorized
     end
-    
+
     it "should assign variables" do
-      course_with_student_logged_in(:active_all => true)
-      course_event
+      user_session(@student)
       get 'show', :course_id => @course.id, :id => @event.id, :format => :json
       # response.should be_success
-      assigns[:event].should_not be_nil
-      assigns[:event].should eql(@event)
+      expect(assigns[:event]).not_to be_nil
+      expect(assigns[:event]).to eql(@event)
     end
 
-    it "should redirect if calendar2 is enabled and the user can't edit" do
-      Account.default.update_attribute(:settings, {:enable_scheduler => true})
-      course_with_student_logged_in(:active_all => true)
-      course_event
+    it "should render show page" do
+      user_session(@student)
       get 'show', :course_id => @course.id, :id => @event.id
-      response.should be_redirect
-      response.redirected_to.should include "include_contexts=#{@course.asset_string}"
+      expect(assigns[:event]).not_to be_nil
+      # make sure that the show.html.erb template is rendered
+      expect(response).to render_template('calendar_events/show')
     end
 
-    it "should redirect to the effective calendar if calendar2 is enabled and the user can't edit" do
-      Account.default.update_attribute(:settings, {:enable_scheduler => true})
-      course_with_student_logged_in(:active_all => true)
-      parent_event = @course.calendar_events.build(:title => "something", :child_event_data => {"0" => {:start_at => Time.now, :end_at => 1.hour.from_now, :context_code => @course.default_section.asset_string}})
-      parent_event.updating_user = @teacher
-      parent_event.save!
-      event = parent_event.child_events.first
-      get 'show', :course_section_id => @course.default_section.id, :id => event.id
-      response.should be_redirect
-      response.redirected_to.should include "include_contexts=#{@course.asset_string}" # goes to course calendar
+    it "should redirect for course section events" do
+      section = @course.default_section
+      section_event = section.calendar_events.create!(title: "Sub event")
+      user_session(@student)
+      get 'show', course_section_id: section.id, id: section_event.id
+      expect(response).to be_redirect
     end
   end
-  
+
   describe "GET 'new'" do
     it "should require authorization" do
-      course_with_student(:active_all => true)
-      get 'new', :course_id => @course.id
-      assert_unauthorized
-    end
-    
-    it "should not allow students to create" do
-      course_with_student_logged_in(:active_all => true)
-      course_event
       get 'new', :course_id => @course.id
       assert_unauthorized
     end
 
-    # it "should assign variables" do
-      # course_with_teacher_logged_in(:active_all => true)
-      # course_event
-      # get 'new', :course_id => @course.id
-# #      response.should be_success
-      # assigns[:event].should_not be_nil
-      # assigns[:event].should be_new_record
-    # end
+    it "should not allow students to create" do
+      user_session(@student)
+      get 'new', :course_id => @course.id
+      assert_unauthorized
+    end
+
+    it "doesn't create an event" do
+      initial_count = @course.calendar_events.count
+      user_session(@teacher)
+      get 'new', :course_id => @course.id
+      expect(@course.reload.calendar_events.count).to eq initial_count
+    end
+
+    it "allows creating recurring calendar events on a user's calendar if the user's account allows them to" do
+      user_session(@teacher)
+      @teacher.account.enable_feature!(:recurring_calendar_events)
+      get 'new', user_id: @teacher.id
+      expect(@controller.js_env[:RECURRING_CALENDAR_EVENTS_ENABLED]).to be(true)
+    end
   end
-  
+
   describe "POST 'create'" do
     it "should require authorization" do
-      course_with_student(:active_all => true)
-      course_event
-      post 'create', :course_id => @course.id
-      assert_unauthorized
-    end
-    
-    it "should not allow students to create" do
-      course_with_student_logged_in(:active_all => true)
-      course_event
-      post 'create', :course_id => @course.id
-      assert_unauthorized
-    end
-    
-    it "should create a new event" do
-      course_with_teacher_logged_in(:active_all => true)
-      course_event
       post 'create', :course_id => @course.id, :calendar_event => {:title => "some event"}
-      response.should be_redirect
-      assigns[:event].should_not be_nil
-      assigns[:event].title.should eql("some event")
+      assert_unauthorized
+    end
+
+    it "should not allow students to create" do
+      user_session(@student)
+      post 'create', :course_id => @course.id, :calendar_event => {:title => "some event"}
+      assert_unauthorized
+    end
+
+    it "should create a new event" do
+      user_session(@teacher)
+      post 'create', :course_id => @course.id, :calendar_event => {:title => "some event"}
+      expect(response).to be_redirect
+      expect(assigns[:event]).not_to be_nil
+      expect(assigns[:event].title).to eql("some event")
     end
   end
-  
+
   describe "GET 'edit'" do
     it "should require authorization" do
-      course_with_student(:active_all => true)
-      course_event
       get 'edit', :course_id => @course.id, :id => @event.id
       assert_unauthorized
     end
-   
+
     it "should not allow students to update" do
-      course_with_student_logged_in(:active_all => true)
-      course_event
+      user_session(@student)
       get 'edit', :course_id => @course.id, :id => @event.id
       assert_unauthorized
     end
   end
-  
+
   describe "PUT 'update'" do
     it "should require authorization" do
-      course_with_student(:active_all => true)
-      course_event
       put 'update', :course_id => @course.id, :id => @event.id
       assert_unauthorized
     end
-    
+
     it "should not allow students to update" do
-      course_with_student_logged_in(:active_all => true)
-      course_event
+      user_session(@student)
       put 'update', :course_id => @course.id, :id => @event.id
       assert_unauthorized
     end
-    
+
     it "should update the event" do
-      course_with_teacher_logged_in(:active_all => true)
-      course_event
+      user_session(@teacher)
       put 'update', :course_id => @course.id, :id => @event.id, :calendar_event => {:title => "new title"}
-      response.should be_redirect
-      assigns[:event].should_not be_nil
-      assigns[:event].should eql(@event)
-      assigns[:event].title.should eql("new title")
+      expect(response).to be_redirect
+      expect(assigns[:event]).not_to be_nil
+      expect(assigns[:event]).to eql(@event)
+      expect(assigns[:event].title).to eql("new title")
     end
   end
-  
+
   describe "DELETE 'destroy'" do
     it "should require authorization" do
-      course_with_student(:active_all => true)
-      course_event
       delete 'destroy', :course_id => @course.id, :id => @event.id
       assert_unauthorized
     end
-    
+
     it "should not allow students to delete" do
-      course_with_student_logged_in(:active_all => true)
-      course_event
+      user_session(@student)
       delete 'destroy', :course_id => @course.id, :id => @event.id
       assert_unauthorized
     end
-    
+
     it "should delete the event" do
-      course_with_teacher_logged_in(:active_all => true)
-      course_event
+      user_session(@teacher)
       delete 'destroy', :course_id => @course.id, :id => @event.id
-      response.should be_redirect
-      assigns[:event].should_not be_nil
-      assigns[:event].should eql(@event)
-      assigns[:event].should_not be_frozen
-      assigns[:event].should be_deleted
+      expect(response).to be_redirect
+      expect(assigns[:event]).not_to be_nil
+      expect(assigns[:event]).to eql(@event)
+      expect(assigns[:event]).not_to be_frozen
+      expect(assigns[:event]).to be_deleted
       @course.reload
-      @course.calendar_events.should be_include(@event)
-      @course.calendar_events.active.should_not be_include(@event)
+      expect(@course.calendar_events).to be_include(@event)
+      expect(@course.calendar_events.active).not_to be_include(@event)
     end
   end
 end

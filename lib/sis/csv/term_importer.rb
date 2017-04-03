@@ -16,17 +16,19 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require 'lib/sis/csv/base_importer'
-
 module SIS
   module CSV
-    class TermImporter < BaseImporter
-    
-      def self.is_term_csv?(row)
+    class TermImporter < CSVBaseImporter
+
+      def self.term_csv?(row)
         #This matcher works because a course has long_name/short_name
         row.include?('term_id') && row.include?('name')
       end
-    
+
+      def self.identifying_fields
+        %w[term_id].freeze
+      end
+
       # expected columns
       # account_id,parent_account_id,name,status
       def process(csv)
@@ -44,7 +46,7 @@ module SIS
             end
 
             begin
-              importer.add_term(row['term_id'], row['name'], row['status'], start_date, end_date)
+              importer.add_term(row['term_id'], row['name'], row['status'], start_date, end_date, row['integration_id'])
             rescue ImportError => e
               add_warning(csv, "#{e}")
             end

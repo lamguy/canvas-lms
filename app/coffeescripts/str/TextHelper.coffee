@@ -17,9 +17,10 @@
 #
 
 define [
+  'jquery'
   'i18n!lib.text_helper'
   'str/htmlEscape'
-], (I18n, htmlEscape) ->
+], ($, I18n, htmlEscape) ->
 
   AUTO_LINKIFY_PLACEHOLDER = "LINK-PLACEHOLDER"
   AUTO_LINKIFY_REGEX = ///
@@ -32,30 +33,32 @@ define [
         |                                        # or
         [a-z0-9.\-]+[.][a-z]{2,4}/               # looks like domain name followed by a slash
       )
-      (?:                                        # One or more:
+
+      (?:
         [^\s()<>]+                               # Run of non-space, non-()<>
         |                                        # or
-        \(([^\s()<>]+|(\([^\s()<>]+\)))*\)       # balanced parens, up to 2 levels
+        \([^\s()<>]*\)                           # balanced parens, single level
       )+
-      (?:                                        # End with:
-        \(([^\s()<>]+|(\([^\s()<>]+\)))*\)       # balanced parens, up to 2 levels
+
+      (?:
+        \([^\s()<>]*\)                           # balanced parens, single level
         |                                        # or
-        [^\s`!()\[\]{};:'".,<>?«»“”‘’]           # not a space or one of these punct chars
+        [^\s`!()\[\]{};:'".,<>?«»“”‘’]           # End with: not a space or one of these punct chars
       )
     ) | (
       LINK-PLACEHOLDER
     )
   ///gi
 
-  th = 
+  th =
     quoteClump: (lines) ->
       "<div class='quoted_text_holder'>
-        <a href='#' class='show_quoted_text_link'>#{I18n.t("quoted_text_toggle", "show quoted text")}</a>
+        <a href='#' class='show_quoted_text_link'>#{htmlEscape I18n.t("quoted_text_toggle", "show quoted text")}</a>
         <div class='quoted_text' style='display: none;'>
-          #{lines.join "\n"}
+          #{$.raw lines.join "\n"}
         </div>
       </div>"
-  
+
     formatMessage: (message) ->
       # replace any links with placeholders so we don't escape them
       links = []
@@ -65,27 +68,26 @@ define [
             AUTO_LINKIFY_PLACEHOLDER
           else
             link = match
-            link = "http://" + link if link[0..3] == 'www'
-            link = encodeURI(link).replace(/'/g, '%27')
+            link = "http://" + link unless link[0..6] == 'http://' or link[0..7] == 'https://'
             links.push link
             "<a href='#{htmlEscape(link)}'>#{htmlEscape(match)}</a>"
         )
         AUTO_LINKIFY_PLACEHOLDER
-  
+
       # now escape html
       message = htmlEscape message
-  
+
       # now put the links back in
       message = message.replace new RegExp(AUTO_LINKIFY_PLACEHOLDER, 'g'), (match, i) ->
         placeholderBlocks.shift()
-  
+
       # replace newlines
       message = message.replace /\n/g, '<br />\n'
-  
+
       # generate quoting clumps
       processedLines = []
       quoteBlock = []
-      for idx, line of message.split("\n")
+      for line in message.split("\n")
         if line.match /^(&gt;|>)/
           quoteBlock.push line
         else
@@ -119,3 +121,20 @@ define [
       # integer is now either in [1, 999], or equal to 0 iff number in (-1, 1).
       # prepend it with the sign
       sign + String(integer) + result
+
+    truncateText: (string, options = {}) ->
+      max = options.max ? 30
+      ellipsis = I18n.t('ellipsis', '...')
+      wordSeparator = I18n.t('word_separator', ' ')
+
+      string = (string ? "").replace(/\s+/g, wordSeparator).trim()
+      return string if not string or string.length <= max
+
+      truncateAt = 0
+      while true
+        pos = string.indexOf(wordSeparator, truncateAt + 1)
+        break if pos < 0 || pos > max - ellipsis.length
+        truncateAt = pos
+      truncateAt or= max - ellipsis.length # first word > max, so we cut it
+
+      string.substring(0, truncateAt) + ellipsis

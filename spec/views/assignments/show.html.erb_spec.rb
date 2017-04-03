@@ -21,17 +21,17 @@ require File.expand_path(File.dirname(__FILE__) + '/../views_helper')
 
 describe "/assignments/show" do
   it "should render" do
-    course_with_teacher
+    course_with_teacher(active_all: true)
     view_context(@course, @user)
     g = @course.assignment_groups.create!(:name => "some group")
     a = @course.assignments.create!(:title => "some assignment")
     a.assignment_group_id = g.id
     a.save!
-    assigns[:assignment] = a
-    assigns[:assignment_groups] = [g]
-    assigns[:current_user_rubrics] = []
+    assign(:assignment, a)
+    assign(:assignment_groups, [g])
+    assign(:current_user_rubrics, [])
     render 'assignments/show'
-    response.should_not be_nil # have_tag()
+    expect(response).not_to be_nil # have_tag()
   end
 end
 

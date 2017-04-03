@@ -5,6 +5,10 @@ define [
   'str/htmlEscape'
 ], (I18n, $, _, h) ->
 
+  ###
+  xsslint safeString.identifier i
+  ###
+
   builders =
     year: (options, htmlOptions) ->
       step = if options.startYear < options.endYear then 1 else -1
@@ -34,10 +38,12 @@ define [
   dateSelect = (name, options, htmlOptions = _.clone(options)) ->
     validOptions = ['type', 'startYear', 'endYear', 'includeBlank', 'order']
     delete htmlOptions[opt] for opt in validOptions
+    htmlOptions['class'] ?= ''
+    htmlOptions['class'] += ' date-select'
 
     year         = (new Date()).getFullYear()
     position     = {year: 1, month: 2, day: 3}
-    dateSettings = I18n.lookup('#date')
+    dateSettings = I18n.lookup('date')
 
     if options.type is 'birthdate'
       _.defaults options,
@@ -53,13 +59,12 @@ define [
     $result = $('<span>')
     for i in [0...options.order.length]
       type = options.order[i]
-      tName = name.replace(/(\]?)$/, "(" + position[type] + ")$1")
-      $result.append(
-        builders[type](
-          options,
-          _.extend({name: tName}, htmlOptions),
-          dateSettings
-        )
+      tName = name.replace(/(\]?)$/, "(" + position[type] + "i)$1")
+      html = builders[type](
+        options,
+        _.extend({name: tName}, htmlOptions),
+        dateSettings
       )
+      $result.append(html)
       delete htmlOptions.id
     $result

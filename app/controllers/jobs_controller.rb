@@ -1,6 +1,7 @@
 class JobsController < ApplicationController
-  before_filter :require_manage_jobs
-  before_filter :set_site_admin_context, :set_navigation, :only => [:index]
+  before_action :require_manage_jobs, :only => [:batch_update]
+  before_action :require_view_jobs, :only => [:index, :show]
+  before_action :set_site_admin_context, :set_navigation, :only => [:index]
   POPULAR_TAG_COUNTS = 12
   LIMIT = 100
 
@@ -8,30 +9,43 @@ class JobsController < ApplicationController
     require_site_admin_with_permission(:manage_jobs)
   end
 
+  def require_view_jobs
+    require_site_admin_with_permission(:view_jobs)
+  end
+
   def index
     @flavor = params[:flavor] || 'current'
 
-    ActiveRecord::Base::ConnectionSpecification.with_environment(:slave) do
+    Shackles.activate(:slave) do
       respond_to do |format|
         format.html do
           @running_jobs_refresh_seconds = Setting.get('running_jobs_refresh_seconds', 2.seconds.to_s).to_f
           @job_tags_refresh_seconds  = Setting.get('job_tags_refresh_seconds', 10.seconds.to_s).to_f
         end
 
-        format.js do
-          result = {}
+        format.json do
           case params[:only]
           when 'running'
-            result[:running] = Delayed::Job.running_jobs
+            render :json => {running: Delayed::Job.running_jobs.map{ |j| j.as_json(include_root: false, except: [:handler, :last_error]) }}
           when 'tags'
-            result[:tags] = Delayed::Job.tag_counts(@flavor, POPULAR_TAG_COUNTS)
+            render :json => {tags: Delayed::Job.tag_counts(@flavor, POPULAR_TAG_COUNTS)}
           when 'jobs'
-            result.merge!(jobs(@flavor, params[:limit] || LIMIT, params[:offset].to_i))
+            jobs = jobs(@flavor, params[:limit] || LIMIT, params[:offset].to_i)
+            jobs[:jobs].map!{ |j| j.as_json(:include_root => false, :except => [:handler, :last_error]) }
+            render :json => jobs
           end
-          render :json => result.to_json(:include_root => false)
         end
       end
     end
+  end
+
+  def show
+    if params[:flavor] == 'failed'
+      job = Delayed::Job::Failed.find(params[:id])
+    else
+      job = Delayed::Job.find(params[:id])
+    end
+    render :json => job.as_json(:include_root => false)
   end
 
   def batch_update
@@ -39,6 +53,7 @@ class JobsController < ApplicationController
 
     if params[:job_ids].present?
       opts[:ids] = params[:job_ids]
+      opts[:flavor] = params[:flavor] if params[:flavor] == 'failed'
     elsif params[:flavor].present?
       opts[:flavor] = params[:flavor]
       opts[:query] = params[:q]

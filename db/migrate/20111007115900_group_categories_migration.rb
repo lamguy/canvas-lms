@@ -1,4 +1,6 @@
-class GroupCategoriesMigration < ActiveRecord::Migration
+class GroupCategoriesMigration < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     create_table :group_categories do |group_categories|
       group_categories.column :context_id, :integer, :limit => 8

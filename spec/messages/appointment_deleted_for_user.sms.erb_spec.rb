@@ -20,6 +20,8 @@ require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
 require File.expand_path(File.dirname(__FILE__) + '/messages_helper')
 
 describe 'appointment_deleted_for_user.sms' do
+  include MessagesCommon
+
   it "should render" do
     user = user_model(:name => 'bob')
     appointment_participant_model(:participant => user)
@@ -28,13 +30,13 @@ describe 'appointment_deleted_for_user.sms' do
                      :data => {:updating_user => @teacher,
                                        :cancel_reason => "just because"})
 
-    @message.body.should include('some title')
+    expect(@message.body).to include('some title')
   end
 
   it "should render for groups" do
     user = user_model(:name => 'bob')
     @course = course_model
-    cat = @course.group_categories.create
+    cat = group_category
     @group = cat.groups.create(:context => @course)
     @group.users << user
     appointment_participant_model(:participant => @group, :course => @course)
@@ -43,6 +45,6 @@ describe 'appointment_deleted_for_user.sms' do
                      :data => {:updating_user => @teacher,
                                        :cancel_reason => "just because"})
 
-    @message.body.should include('some title')
+    expect(@message.body).to include('some title')
   end
 end

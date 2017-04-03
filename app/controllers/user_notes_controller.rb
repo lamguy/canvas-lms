@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License along
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
+require 'dynamic_form'
 
 class UserNotesController < ApplicationController
   def index
@@ -29,10 +30,10 @@ class UserNotesController < ApplicationController
       end
     end
   end
-  
+
    def user_notes
     get_context
-    return render 'shared/unauthorized' unless @context.root_account.enable_user_notes
+    return render_unauthorized_action unless @context.root_account.enable_user_notes
     if authorized_action(@context, @current_user, :manage_user_notes)
       if @context && @context.is_a?(Account)
         @users = @context.all_users.active.has_current_student_enrollments
@@ -40,48 +41,46 @@ class UserNotesController < ApplicationController
         @users = @context.students_visible_to(@current_user).order_by_sortable_name
         @is_course = true
       end
-      count = @users.count
-      @users = @users.scoped(:select=> "name, users.id, last_user_note", :order=>"last_user_note ASC, #{User.sortable_name_order_by_clause} ASC", :extend => User::SortableNameExtension)
-      @users = @users.paginate(:page => params[:page], :per_page => 20, :total_entries=>count)
-      # rails gets confused by :include => :courses, because has_current_student_enrollments above references courses in a subquery
-      User.send(:preload_associations, @users, :courses)
+      @users = @users.order("users.last_user_note").order_by_sortable_name
+      @users = @users.paginate(:page => params[:page], :per_page => 20)
     end
   end
 
   def show
-    @user_note = UserNote.find_by_id(params[:id])
+    @user_note = UserNote.where(id: params[:id]).first
     if authorized_action(@user_note, @current_user, :read)
       respond_to do |format|
         format.html { redirect_to user_user_notes_path }
-        format.json { render :json => @user_note.to_json(:methods=>[:creator_name]), :status => :created }
+        format.json { render :json => @user_note.as_json(:methods=>[:creator_name]), :status => :created }
         format.text { render :json => @user_note, :status => :created }
       end
     end
   end
 
   def create
-    params[:user_note] = {} unless params[:user_note].is_a? Hash
-    params[:user_note][:user] = User.find_by_id(params[:user_note].delete(:user_id)) if params[:user_note][:user_id]
-    params[:user_note][:user] ||= User.find_by_id(params[:user_id])
+    user_note_params = params[:user_note] ? params[:user_note].permit(:note, :title, :creator, :user_id) : {}
+
+    user = User.where(id: user_note_params.delete(:user_id)).first if user_note_params[:user_id]
+    user ||= User.where(id: params[:user_id]).first
     # We want notes to be an html field, but we're only using a plaintext box for now. That's why we're
     # doing the trip to html now, instead of on the way out. This should be removed once the user notes
     # entry form is replaced with the rich text editor.
     self.extend TextHelper
-    params[:user_note][:note] = format_message(params[:user_note][:note]).first if params[:user_note][:note]
-    @user_note = UserNote.new(params[:user_note])
+    user_note_params[:note] = format_message(user_note_params[:note]).first if user_note_params[:note]
+    @user_note = user.user_notes.new(user_note_params)
     @user_note.creator = @current_user
-    
+
     if authorized_action(@user_note.user, @current_user, :create_user_notes)
       respond_to do |format|
         if @user_note.save
           flash[:notice] = t 'notices.created', "Journal Entry was successfully created."
           format.html { redirect_to user_user_notes_path }
-          format.json { render :json => @user_note.to_json(:methods=>[:creator_name, :formatted_note]), :status => :created }
+          format.json { render :json => @user_note.as_json(:methods=>[:creator_name, :formatted_note]), :status => :created }
           format.text { render :json => @user_note, :status => :created }
         else
           format.html { redirect_to(user_user_notes_path) }
-          format.json { render :json => @user_note.errors.to_json, :status => :bad_request }
-          format.text { render :json => @user_note.errors.to_json, :status => :bad_request }
+          format.json { render :json => @user_note.errors, :status => :bad_request }
+          format.text { render :json => @user_note.errors, :status => :bad_request }
         end
       end
     end
@@ -94,8 +93,8 @@ class UserNotesController < ApplicationController
 
       respond_to do |format|
         format.html { redirect_to user_user_notes_path }
-        format.json { render :json => @user_note.to_json(:methods=>[:creator_name]), :status => :ok }
-      end 
+        format.json { render :json => @user_note.as_json(:methods=>[:creator_name]), :status => :ok }
+      end
     end
   end
 end

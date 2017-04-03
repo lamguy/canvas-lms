@@ -1,4 +1,6 @@
-class AddGradePublishingStatusToEnrollments < ActiveRecord::Migration
+class AddGradePublishingStatusToEnrollments < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     add_column :enrollments, :grade_publishing_status, :string, :default => "unpublished"
     add_column :enrollments, :last_publish_attempt_at, :datetime

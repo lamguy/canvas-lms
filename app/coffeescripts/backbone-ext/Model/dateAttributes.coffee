@@ -1,4 +1,4 @@
-define ['use!vendor/backbone', 'underscore'], (Backbone, _) ->
+define ['node_modules-version-of-backbone', 'underscore'], (Backbone, _) ->
 
   _parse = Backbone.Model::parse
 

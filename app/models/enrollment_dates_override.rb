@@ -17,13 +17,14 @@
 #
 
 class EnrollmentDatesOverride < ActiveRecord::Base
-  belongs_to :context, :polymorphic => true
+  belongs_to :context, polymorphic: [:account]
   belongs_to :enrollment_term
 
-  attr_accessible :context, :enrollment_type, :enrollment_term, :start_at, :end_at
-  before_save :touch_all_courses
+  after_save :update_courses_and_states_if_necessary
 
-  def touch_all_courses
-    self.enrollment_term.update_courses_later if self.changed?
+  def update_courses_and_states_if_necessary
+    if self.changed?
+      self.enrollment_term.update_courses_and_states_later(self.enrollment_type)
+    end
   end
 end

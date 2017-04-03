@@ -1,12 +1,15 @@
-class AddThumbnailUuid < ActiveRecord::Migration
-  class Thumbnail < ActiveRecord::Base; end
+class AddThumbnailUuid < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
+  class Thumbnail < ActiveRecord::Base
+  end
 
   def self.up
     add_column :thumbnails, :uuid, :string
     add_index :thumbnails, [:id, :uuid]
 
     Thumbnail.find_each do |t|
-      t.uuid ||= AutoHandle.generate_securish_uuid
+      t.uuid ||= CanvasSlug.generate_securish_uuid
       t.save
     end
   end

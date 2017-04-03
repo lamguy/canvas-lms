@@ -1,6 +1,6 @@
-class PopulateConversationMessageProperties < ActiveRecord::Migration
+class PopulateConversationMessageProperties < ActiveRecord::Migration[4.2]
   tag :postdeploy
-  self.transactional = false
+  disable_ddl_transaction!
 
   def self.up
     DataFixup::PopulateConversationMessageProperties.send_later_if_production(:run)

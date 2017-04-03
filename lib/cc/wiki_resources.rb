@@ -17,22 +17,31 @@
 #
 module CC
   module WikiResources
-    
+
     def add_wiki_pages
       wiki_folder = File.join(@export_dir, CCHelper::WIKI_FOLDER)
       FileUtils::mkdir_p wiki_folder
-      
-      @course.wiki.wiki_pages.active.each do |page|
+
+      scope = @course.wiki.wiki_pages.not_deleted
+      WikiPages::ScopedToUser.new(@course, @user, scope).scope.each do |page|
         next unless export_object?(page)
+        next if @user && page.locked_for?(@user)
+
         begin
-          migration_id = CCHelper.create_key(page)
+          add_exported_asset(page)
+
+          migration_id = create_key(page)
           file_name = "#{page.url}.html"
           relative_path = File.join(CCHelper::WIKI_FOLDER, file_name)
           path = File.join(wiki_folder, file_name)
           meta_fields = {:identifier => migration_id}
           meta_fields[:editing_roles] = page.editing_roles
-          meta_fields[:hide_from_students] = page.hide_from_students
           meta_fields[:notify_of_update] = page.notify_of_update
+          meta_fields[:workflow_state] = page.workflow_state
+          meta_fields[:front_page] = page.is_front_page?
+          meta_fields[:module_locked] = page.locked_by_module_item?(@user, deep_check_if_needed: true).present?
+          meta_fields[:assignment_identifier] =
+            page.for_assignment? ? create_key(page.assignment) : nil
 
           File.open(path, 'w') do |file|
             file << @html_exporter.html_page(page.body, page.title, meta_fields)

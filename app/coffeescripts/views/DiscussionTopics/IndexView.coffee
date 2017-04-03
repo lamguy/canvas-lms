@@ -1,155 +1,156 @@
 define [
-  'i18n!discussion_topics'
+  'jquery'
   'underscore'
+  'Backbone'
+  'i18n!discussion_topics'
   'jst/DiscussionTopics/IndexView'
-  'compiled/views/PaginatedView'
-  'compiled/views/DiscussionTopics/SummaryView'
-  'compiled/collections/AnnouncementsCollection'
-], (I18n, _, template, PaginatedView, DiscussionTopicSummaryView, AnnouncementsCollection) ->
+  'compiled/views/DiscussionTopics/DiscussionsSettingsView'
+  'compiled/views/DiscussionTopics/UserSettingsView'
+], ($, _, {View}, I18n, template, DiscussionsSettingsView, UserSettingsView) ->
 
-  class IndexView extends PaginatedView
-
+  class IndexView extends View
     template: template
 
     el: '#content'
 
-    initialize: ->
-      super
-      @collection.on 'remove', => @render() unless @collection.length
-      @collection.on 'reset', @render
-      @collection.on 'add didFetchNextPage', @renderList
-      @collection.on 'change:selected', @toggleActionsForSelectedDiscussions
-      @render()
-
-    render: =>
-      super
-      @$('#discussionsFilter').buttonset()
-      @renderList()
-      @toggleActionsForSelectedDiscussions()
-      this
-
-    renderList: =>
-      $list = @$('.discussionTopicIndexList').empty()
-      nothingMatched = not _.any @collection.map @addDiscussionTopicToList
-      @$('.nothingMatchedFilter').toggle nothingMatched && !@collection.fetchingNextPage
-      makeSortable = !nothingMatched &&
-                     !@activeFilters.length &&
-                     !@isShowingAnnouncements() &&
-                     @options.permissions.moderate
-      if makeSortable
-        $list.sortable
-          axis: 'y'
-          cancel: 'a'
-          containment: $list
-          cursor: 'ns-resize'
-          handle: '.discussion-drag-handle'
-
-      else if $list.is(':ui-sortable')
-        $list.sortable('destroy')
-
-    addDiscussionTopicToList: (discussionTopic) =>
-      if @modelMeetsFilterRequirements(discussionTopic)
-        view = new DiscussionTopicSummaryView
-          model: discussionTopic
-          permissions: @options.permissions
-        @$('.discussionTopicIndexList').append view.render().el
-
-    toggleActionsForSelectedDiscussions: =>
-      selectedTopics = @selectedTopics()
-      atLeastOneSelected = selectedTopics.length > 0
-      $actions = @$('#actionsForSelectedDiscussions').toggle atLeastOneSelected
-      if atLeastOneSelected
-        checkLock = _.any selectedTopics, (model) -> model.get('locked')
-        $actions.find('#lock').prop('checked', checkLock).button
-          text: false
-          icons:
-            primary: 'ui-icon-locked'
-        $actions.find('#delete').button
-          text: false
-          icons:
-            primary: 'ui-icon-trash'
-        $actions.buttonset()
-
-    toggleLockingSelectedTopics: ->
-      lock = @$('#lock').is(':checked')
-      _.invoke @selectedTopics(), 'updateOneAttribute', 'locked', lock
-
-    destroySelectedTopics: ->
-      selectedTopics = @selectedTopics()
-
-      message = if @isShowingAnnouncements()
-        I18n.t 'confirm_delete_announcement',
-          one: 'Are you sure you wan to delete this announcement?'
-          other: 'Are you sure you want to delete these %{count} announcements?'
-        ,
-          count: selectedTopics.length
-      else
-        I18n.t 'confirm_delete_discussion_topic',
-          one: 'Are you sure you wan to delete this discussion topic?'
-          other: 'Are you sure you want to delete these %{count} discussion topics?'
-        ,
-          count: selectedTopics.length
-
-      if confirm message
-        _(selectedTopics).invoke 'destroy'
-        @toggleActionsForSelectedDiscussions()
-
-    selectedTopics: ->
-      @collection.filter (model) -> model.selected
+    @child 'openDiscussionView',   '.open.discussion-list'
+    @child 'lockedDiscussionView', '.locked.discussion-list'
+    @child 'pinnedDiscussionView', '.pinned.discussion-list'
 
     events:
-      'change #onlyUnread, #onlyGraded, #searchTerm' : 'handleFilterChange'
-      'input #searchTerm' : 'handleFilterChange'
-      'sortupdate' : 'handleSortUpdate'
-      'change #lock' : 'toggleLockingSelectedTopics'
-      'click #delete' : 'destroySelectedTopics'
-
-    modelMeetsFilterRequirements: (model) =>
-      _.all @activeFilters(), (fn, key) =>
-        fn.call(model, @[key])
-
-    handleSortUpdate: (event, ui) =>
-      id = ui.item.data 'id'
-      otherId = ui.item.next('.discussion-topic').data 'id'
-      @collection.get(id).positionAfter otherId
-
-    activeFilters: ->
-      res = {}
-      res[key] = fn for key, fn of @filters when @[key]
-      res
-
-    handleFilterChange: (event) ->
-      input = event.target
-      val = if input.type is "checkbox" then input.checked else input.value
-      @[input.id] = val
-      @renderList()
-      @collection.trigger 'aBogusEventToCauseYouToFetchNextPageIfNeeded'
+      'click .ig-header .element_toggler': 'toggleDiscussionList'
+      'focus .accessibility-warning': 'handleAccessibilityWarningFocus'
+      'blur .accessibility-warning': 'handleAccessibilityWarningBlur'
+      'keydown .ig-header .element_toggler': 'toggleDiscussionList'
+      'click .discussion-list': 'toggleDiscussionListWithVo'
+      'click #edit_discussions_settings':  'toggleSettingsView'
+      'change #onlyUnread, #onlyGraded':   'filterResults'
+      'keyup #searchTerm':                 'filterResults'
 
     filters:
-      onlyGraded: -> @get 'assignment_id'
-      onlyUnread: -> (@get('read_state') is 'unread') or @get('unread_count')
-      searchTerm: (term) ->
-        words = term.match(/\w+/ig)
-        pattern = "(#{_.uniq(words).join('|')})"
-        regexp = new RegExp(pattern, "igm")
+      onlyGraded:
+        active: false
+        fn: (model) ->
+          model.get('assignment_id')
+      onlyUnread:
+        active: false
+        fn: (model) ->
+          model.get('unread_count') > 0 or model.get('read_state') is 'unread'
+      searchTerm:
+        active: false
+        fn: (model, term) ->
+          return unless term
+          regex = new RegExp(term, 'ig')
+          model.get('title').match(regex) or
+            model.get('user_name')?.match(regex) or
+            model.summary().match(regex)
 
-        @get('author')?.display_name?.match(regexp) ||
-          @get('title').match(regexp) ||
-          @summary().match(regexp)
+    collections: ->
+      [
+        @options.openDiscussionView.collection
+        @options.lockedDiscussionView.collection
+        @options.pinnedDiscussionView.collection
+      ]
 
-    isShowingAnnouncements: ->
-      @collection.constructor == AnnouncementsCollection
+    initialize: ->
+      super
+      @listenTo(@options.pinnedDiscussionView.collection, "add remove", @handleAddRemovePinnedDiscussion)
+
+    afterRender: ->
+      @$('#discussionsFilter').buttonset()
+      @setAccessibilityWarningState();
+
+    activeFilters: ->
+      _.select(@filters, (value, key) => value.active)
+
+    filter: (model, term) =>
+      _.all(@activeFilters(), (filter) -> filter.fn.call(model, model, term))
+
+    screenreaderSearchResultCount: _.debounce ->
+      text = ''
+      if @activeFilters().length > 0
+        text = I18n.t({one: 'One result', other: '%{count} results'}, {count: @resultCount})
+      else
+        text = I18n.t('Showing all discussions')
+      @$('#searchResultCount').text(text)
+    , 1000
+
+    filterResults: (e) =>
+      if e.target.type is 'checkbox'
+        @filters[e.target.id].active = $(e.target).prop('checked')
+        term = $('#searchTerm').val() if $('#searchTerm').val().length > 0
+      else
+        @filters[e.target.id].active = $(e.target).val().length > 0
+        term = $(e.target).val()
+
+      resultCount = 0
+      _.each @collections(), (collection) =>
+        collection.each (model) =>
+          if @activeFilters().length > 0
+            hidden = !@filter(model, term)
+            if !hidden
+              resultCount += 1
+            model.set('hidden', hidden)
+          else
+            resultCount += 1
+            model.set('hidden', false)
+      @resultCount = resultCount
+      @screenreaderSearchResultCount()
+
+    toggleSettingsView: ->
+      @settingsView().toggle()
+
+    toggleDiscussionList: (e) ->
+      $currentTarget = $(e.currentTarget)
+      # If we get a keydown that is not enter or space, ignore.
+      # Otherwise, simulate a click.
+      if e.type is 'keydown'
+        if e.keyCode in [13, 32]
+          e.preventDefault()
+          $currentTarget.click()
+        return
+      $icon = $currentTarget.find('i')
+      while $currentTarget.length && $icon.length is 0
+        $currentTarget = $currentTarget.parent()
+        $icon = $currentTarget.find('i')
+      return unless $icon.length
+      $icon.toggleClass('icon-mini-arrow-down').toggleClass('icon-mini-arrow-right')
+
+    setAccessibilityWarningState: ->
+      if @options.pinnedDiscussionView.collection.length > 1
+        $('.accessibility-warning').show()
+      else
+        $('.accessibility-warning').hide()
+
+    handleAddRemovePinnedDiscussion: ->
+      @setAccessibilityWarningState();
+
+    handleAccessibilityWarningFocus: (e) ->
+      if @options.pinnedDiscussionView.collection.length > 1
+        $accessibilityWarning = $(e.currentTarget)
+        $accessibilityWarning.removeClass('screenreader-only')
+
+    handleAccessibilityWarningBlur: (e) ->
+      if @options.pinnedDiscussionView.collection.length > 1
+        $accessibilityWarning = $(e.currentTarget)
+        $accessibilityWarning.addClass('screenreader-only')
+    
+    toggleDiscussionListWithVo: (e) ->
+      # if this event bubbled up from somewhere else, do nothing.
+      return unless e.target is e.delegateTarget or e.target.isSameNode?(e.delegateTarget)
+      $(e.target).find('.ig-header .element_toggler').first().click()
+      false
+
+    settingsView: ->
+      @_settingsView or= if @options.permissions.change_settings
+        new DiscussionsSettingsView()
+      else
+        new UserSettingsView()
+      @_settingsView
 
     toJSON: ->
-      new_topic_url = @collection.url().replace('/api/v1', '') + '/new'
-      if @isShowingAnnouncements()
-        new_topic_url = (new_topic_url + '?is_announcement=true')
-                        # announcements will have a '?only_announcements=true' at the end, remove it
-                        .replace(@collection._stringToAppendToURL, '')
-      filterProps = _.pick this, _.keys(@filters)
-      collectionProps = _.pick @collection, ['atLeastOnePageFetched', 'length']
-      _.extend
-        new_topic_url: new_topic_url
-        options: @options
-        showingAnnouncements: @isShowingAnnouncements()
-      , filterProps, collectionProps
+      _.extend {},
+        options: @options,
+        length: 1,
+        atLeastOnePageFetched: true
+        new_topic_url: ENV.newTopicURL

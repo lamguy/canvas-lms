@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2011 Instructure, Inc.
+# Copyright (C) 2011 - 2013 Instructure, Inc.
 #
 # This file is part of Canvas.
 #
@@ -16,15 +16,17 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require 'lib/sis/csv/base_importer'
-
 module SIS
   module CSV
-    class SectionImporter < BaseImporter
+    class SectionImporter < CSVBaseImporter
 
-      def self.is_section_csv?(row)
+      def self.section_csv?(row)
         #This matcher works because an enrollment doesn't have name
         row.include?('section_id') && row.include?('name')
+      end
+
+      def self.identifying_fields
+        %w[section_id].freeze
       end
 
       # expected columns
@@ -44,7 +46,7 @@ module SIS
             end
 
             begin
-              importer.add_section(row['section_id'], row['course_id'], row['name'], row['status'], start_date, end_date, row['account_id'])
+              importer.add_section(row['section_id'], row['course_id'], row['name'], row['status'], start_date, end_date, row['integration_id'])
             rescue ImportError => e
               add_warning(csv, "#{e}")
             end

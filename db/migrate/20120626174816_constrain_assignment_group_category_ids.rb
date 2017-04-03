@@ -1,8 +1,8 @@
-class ConstrainAssignmentGroupCategoryIds < ActiveRecord::Migration
+class ConstrainAssignmentGroupCategoryIds < ActiveRecord::Migration[4.2]
   tag :postdeploy
 
   def self.up
-    Assignment.update_all({:group_category_id => nil}, :group_category_id => 0)
+    Assignment.where(:group_category_id => 0).update_all(:group_category_id => nil)
     add_foreign_key :assignments, :group_categories
   end
 

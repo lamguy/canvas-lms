@@ -1,4 +1,6 @@
-class AddQuizRequireLockdownBrowserForResults < ActiveRecord::Migration
+class AddQuizRequireLockdownBrowserForResults < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     add_column :quizzes, :require_lockdown_browser_for_results, :boolean
   end

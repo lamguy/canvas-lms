@@ -1,10 +1,11 @@
 define [
   'jquery'
   'underscore'
+  'i18n!context_sector'
   'jst/calendar/contextSelector'
   'jst/calendar/contextSelectorItem'
   'compiled/fn/preventDefault'
-], ($, _, contextSelectorTemplate, contextSelectorItemTemplate, preventDefault) ->
+], ($, _, I18n, contextSelectorTemplate, contextSelectorItemTemplate, preventDefault) ->
 
   class ContextSelectorItem
     constructor: (@context) ->
@@ -22,9 +23,15 @@ define [
       @$sectionCheckboxes = @$listItem.find('[name="sections[]"]')
       @$sectionCheckboxes.change @sectionChange
 
-    toggleSections: (jsEvent) =>
-      $(jsEvent.target).toggleClass('ag-sections-expanded')
+    toggleSections: (e) =>
       @$sectionsList.toggleClass('hidden')
+      $toggle = @$listItem.find('.ag_sections_toggle')
+      $toggle.toggleClass('ag-sections-expanded')
+
+      if $toggle.hasClass('ag-sections-expanded')
+        $toggle.find('.screenreader-only').text(I18n.t('Hide course sections for course %{name}', { name: @context.name }))
+      else
+        $toggle.find('.screenreader-only').text(I18n.t('Show course sections for course %{name}', { name: @context.name }))
 
     change: =>
       newState =  switch @state
@@ -58,23 +65,25 @@ define [
         else
           @setState('partial')
 
-    disable: ->
+    disableSelf: ->
       @$contentCheckbox.prop('disabled', true)
-      @disableSections()
 
     disableSections: ->
       @$sectionCheckboxes.prop('disabled', true)
 
+    disableAll: ->
+      @disableSelf()
+      @disableSections()
+
     lock: ->
       @locked = true
-      @disable()
-      @disableSections()
+      @disableAll()
 
     isChecked: -> @state != 'off'
 
     sections: ->
       checked = @$sectionCheckboxes.filter(':checked')
-      if checked.length == @$sectionCheckboxes.length
+      if checked.length == @$sectionCheckboxes.length && !@$contentCheckbox.attr('disabled')
         []
       else
         _.map(checked, (cb) -> cb.value)
@@ -93,26 +102,39 @@ define [
         item.render($contextsList)
         @contextSelectorItems[item.context.asset_string] = item
 
-      if @apptGroup.sub_context_codes.length > 0
-        if @apptGroup.sub_context_codes[0].match /^group_category_/
-          for c, item of @contextSelectorItems
-            item.lock()
-        else
-          contextsBySubContext = {}
-          for c in @contexts
-            for section in c.course_sections
-              contextsBySubContext[section.asset_string] = c.asset_string
-
-          for subContextCode in @apptGroup.sub_context_codes
-            $("[value='#{subContextCode}']").prop('checked', true)
-            context = contextsBySubContext[subContextCode]
-            item = @contextSelectorItems[context]
-            item.sectionChange()
-            item.lock()
+      # if groups can sign up, then we only have one context (course) and one sub-context (group)
+      # a context without sub-contexts means the whole context is selected
+      # a context with sub-contexts means that under that context, only those sub-contexts are selected
+      # there can be a mix of contexts with and without sub-contexts
+      if @apptGroup.sub_context_codes.length > 0 and @apptGroup.sub_context_codes[0].match /^group_category_/
+        for c, item of @contextSelectorItems
+          if c == @apptGroup.context_codes[0]
+            item.setState('on')
+          item.lock()
       else
-        for contextCode in @apptGroup.context_codes when @contextSelectorItems[contextCode]
-          @contextSelectorItems[contextCode].setState('on')
-          @contextSelectorItems[contextCode].lock()
+        contextsBySubContext = {}
+
+        for c in @contexts
+          for section in c.course_sections
+            contextsBySubContext[section.asset_string] = c.asset_string
+
+        for subContextCode in @apptGroup.sub_context_codes
+          $("[value='#{subContextCode}']").prop('checked', true)
+          context = contextsBySubContext[subContextCode]
+          item = @contextSelectorItems[context]
+          item.sectionChange()
+          item.lock()
+
+        for contextCode in @apptGroup.context_codes
+          item = @contextSelectorItems[contextCode]
+          if item.state == 'off'
+            item.setState('on')
+            item.lock()
+
+        for c, item of @contextSelectorItems
+          unless item.locked || item.context.can_create_appointment_groups.all_sections
+            item.toggleSections()
+            item.disableSelf()
 
       $('.ag_contexts_done').click preventDefault closeCB
 

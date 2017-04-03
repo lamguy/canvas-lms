@@ -25,7 +25,9 @@ module SimpleTags
         tags.map{ |tag|
           wildcard(quoted_table_name + '.tags', tag, :delimiter => ',')
         }
-      scoped({:conditions => conditions.join(options[:mode] == :or ? " OR " : " AND ")})
+      conditions.empty? ?
+          none :
+          where(conditions.join(options[:mode] == :or ? " OR " : " AND "))
     end
 
     def tagged_scope_handler(pattern, &block)
@@ -48,6 +50,7 @@ module SimpleTags
 
   module WriterInstanceMethods
     def tags=(new_tags)
+      tags_will_change! unless tags == new_tags
       @tag_array = new_tags || []
     end
 
@@ -74,7 +77,7 @@ module SimpleTags
       if tag =~ /\A((course|group)_\d+).*/
         ary << $1
       elsif tag =~ /\Asection_(\d+).*/
-        section = CourseSection.find_by_id($1)
+        section = CourseSection.where(id: $1).first
         ary << section.course.asset_string if section
       # TODO: allow user-defined tags, e.g. #foo
       end

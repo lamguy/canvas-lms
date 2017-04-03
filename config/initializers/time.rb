@@ -1,31 +1,12 @@
-Time.class_eval do
-  if RUBY_VERSION < "1.9."
-    def strftime_with_1_9_parity(string)
-      string = string.gsub(/%(%|-?[a-zA-Z]|[369]N)/) do |match|
-        case match
-          when '%L', '%3N'; ("%.3f" % (to_f % 1))[2, 3]
-          when '%6N'; ("%.6f" % (to_f % 1))[2, 6]
-          when '%N', '%9N'; ("%.9f" % (to_f % 1))[2, 9]
-          when '%P'; strftime_without_1_9_parity('%p').downcase
-          when '%v'; '%e-%b-%Y'
-          when '%-d'; strftime_without_1_9_parity('%d').sub(/^0+/, '')
-          else match
-        end
-      end
-      strftime_without_1_9_parity(string)
-    end
-    alias_method_chain :strftime, :'1_9_parity'
-  end
-
-  def utc_datetime
-    timestamp = self.getutc
-    DateTime.civil(timestamp.strftime("%Y").to_i, 
-                   timestamp.strftime("%m").to_i,
-                   timestamp.strftime("%d").to_i,
-                   timestamp.strftime("%H").to_i, 
-                   timestamp.strftime("%M").to_i)
+module JsonTimeInUTC
+  def as_json(options = {})
+    return super if utc?
+    utc.as_json(options)
   end
 end
+Time.prepend(JsonTimeInUTC)
+DateTime.prepend(JsonTimeInUTC)
+ActiveSupport::TimeWithZone.prepend(JsonTimeInUTC)
 
 # Object#blank? calls respond_to?, which has to instantiate the time object
 # by doing an expensive time zone calculation.  So just skip that.
@@ -37,4 +18,23 @@ class ActiveSupport::TimeWithZone
   def utc_datetime
     self.comparable_time.utc_datetime
   end
+end
+
+module TimeZoneAsJson
+  def as_json(_options = {})
+    tzinfo.name
+  end
+end
+
+ActiveSupport::TimeZone.include(TimeZoneAsJson)
+
+# Add Paraguay (Asuncion) as a friendly time zone
+ActiveSupport::TimeZone::MAPPING['Asuncion'] = 'America/Asuncion'
+ActiveSupport::TimeZone.instance_variable_set(:@zones, nil)
+ActiveSupport::TimeZone.instance_variable_set(:@zones_map, nil)
+if CANVAS_RAILS4_2
+  ActiveSupport::TimeZone.instance_variable_set(:@lazy_zones_map, ThreadSafe::Cache.new)
+else
+  ActiveSupport::TimeZone.instance_variable_set(:@lazy_zones_map, Concurrent::Map.new)
+  ActiveSupport::TimeZone.instance_variable_set(:@country_zones, Concurrent::Map.new)
 end

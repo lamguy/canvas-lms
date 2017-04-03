@@ -1,8 +1,10 @@
-class AddSamlRequestedAuthnContext < ActiveRecord::Migration
+class AddSamlRequestedAuthnContext < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     add_column :account_authorization_configs, :requested_authn_context, :string
 
-    AccountAuthorizationConfig.find_all_by_auth_type("saml").each do |aac|
+    AccountAuthorizationConfig.where(auth_type: "saml").each do |aac|
       # This was the hard-coded value before
       aac.requested_authn_context = Onelogin::Saml::AuthnContexts::PASSWORD_PROTECTED_TRANSPORT
       aac.save!

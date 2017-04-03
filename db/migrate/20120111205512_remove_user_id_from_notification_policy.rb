@@ -1,4 +1,6 @@
-class RemoveUserIdFromNotificationPolicy < ActiveRecord::Migration
+class RemoveUserIdFromNotificationPolicy < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     remove_column :notification_policies, :user_id
   end

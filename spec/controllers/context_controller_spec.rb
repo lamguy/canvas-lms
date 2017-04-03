@@ -16,60 +16,179 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
+require File.expand_path(File.dirname(__FILE__) + '/../sharding_spec_helper')
 
 describe ContextController do
+  before :once do
+    course_with_teacher(:active_all => true)
+    student_in_course(:active_all => true)
+  end
+
   describe "GET 'roster'" do
     it "should require authorization" do
-      course_with_teacher(:active_all => true)
       get 'roster', :course_id => @course.id
       assert_unauthorized
+    end
+
+    it "should work when the context is a group in a course" do
+      user_session(@student)
+      @group = @course.groups.create!
+      @group.add_user(@student, 'accepted')
+      get 'roster', :group_id => @group.id
+      expect(assigns[:primary_users].each_value.first.collect(&:id)).to eq [@student.id]
+      expect(assigns[:secondary_users].each_value.first.collect(&:id)).to match_array @course.admins.map(&:id)
+    end
+
+    it "should only show active group members to students" do
+      active_student = user_factory
+      @course.enroll_student(active_student).accept!
+      inactive_student = user_factory
+      @course.enroll_student(inactive_student).deactivate
+
+      @group = @course.groups.create!
+      [@student, active_student, inactive_student].each do |u|
+        @group.add_user(u, 'accepted')
+      end
+
+      user_session(@student)
+      get 'roster', :group_id => @group.id
+      expect(assigns[:primary_users].each_value.first.collect(&:id)).to match_array [@student.id, active_student.id]
+    end
+
+    it "should only show active course instructors to students" do
+      active_teacher = user_factory
+      @course.enroll_teacher(active_teacher).accept!
+      inactive_teacher = user_factory
+      @course.enroll_teacher(inactive_teacher).deactivate
+
+      @group = @course.groups.create!
+      @group.add_user(@student, 'accepted')
+
+      user_session(@student)
+      get 'roster', :group_id => @group.id
+      teacher_ids = assigns[:secondary_users].each_value.first.map(&:id)
+      expect(teacher_ids & [active_teacher.id, inactive_teacher.id]).to eq [active_teacher.id]
+    end
+
+    it "should show all group members to admins" do
+      active_student = user_factory
+      @course.enroll_student(active_student).accept!
+      inactive_student = user_factory
+      @course.enroll_student(inactive_student).deactivate
+
+      @group = @course.groups.create!
+      [@student, active_student, inactive_student].each do |u|
+        @group.add_user(u, 'accepted')
+      end
+      user_session(@teacher)
+      get 'roster', :group_id => @group.id
+      expect(assigns[:primary_users].each_value.first.collect(&:id)).to match_array [@student.id, active_student.id, inactive_student.id]
+    end
+
+    context "student content cards" do
+      before(:once) do
+        @course.root_account.enable_feature! :student_context_cards
+      end
+
+      it "is disabled when feature_flag is off" do
+        @course.root_account.disable_feature! :student_context_cards
+        user_session(@teacher)
+        get :roster, course_id: @course.id
+        expect(assigns[:js_env][:STUDENT_CONTEXT_CARDS_ENABLED]).to be_falsey
+      end
+
+      it "is enabled for teachers when feature_flag is on" do
+        %w[manage_students manage_admin_users].each do |perm|
+          RoleOverride.manage_role_override(Account.default, teacher_role, perm, override: false)
+        end
+        user_session(@teacher)
+        get :roster, course_id: @course.id
+        expect(assigns[:js_env][:STUDENT_CONTEXT_CARDS_ENABLED]).to be true
+      end
+
+      it "is always disabled for students" do
+        user_session(@student)
+        get :roster, course_id: @course.id
+        expect(assigns[:js_env][:STUDENT_CONTEXT_CARDS_ENABLED]).to be_falsey
+      end
     end
   end
 
   describe "GET 'roster_user'" do
     it "should require authorization" do
-      course_with_teacher(:active_all => true)
       get 'roster_user', :course_id => @course.id, :id => @user.id
       assert_unauthorized
     end
 
     it "should assign variables" do
-      course_with_student_logged_in(:active_all => true)
-      @enrollment = @course.enroll_student(user(:active_all => true))
+      user_session(@teacher)
+      @enrollment = @course.enroll_student(user_factory(:active_all => true))
       @enrollment.accept!
       @student = @enrollment.user
       get 'roster_user', :course_id => @course.id, :id => @student.id
-      assigns[:enrollment].should_not be_nil
-      assigns[:enrollment].should eql(@enrollment)
-      assigns[:user].should_not be_nil
-      assigns[:user].should eql(@student)
-      assigns[:topics].should_not be_nil
-      assigns[:entries].should_not be_nil
-    end
-  end
-
-  describe "GET 'chat'" do
-    it "should redirect if no chats enabled" do
-      course_with_teacher(:active_all => true)
-      get 'chat', :course_id => @course.id, :id => @user.id
-      response.should be_redirect
+      expect(assigns[:membership]).not_to be_nil
+      expect(assigns[:membership]).to eql(@enrollment)
+      expect(assigns[:user]).not_to be_nil
+      expect(assigns[:user]).to eql(@student)
+      expect(assigns[:topics]).not_to be_nil
+      expect(assigns[:messages]).not_to be_nil
     end
 
-    it "should require authorization" do
-      PluginSetting.create!(:name => "tinychat", :settings => {})
-      course_with_teacher(:active_all => true)
-      get 'chat', :course_id => @course.id, :id => @user.id
-      assert_unauthorized
+    describe 'across shards' do
+      specs_require_sharding
+
+      it 'allows merged users from other shards to be referenced' do
+        user1 = user_model
+        course1 = course_factory(active_all: true)
+        course1.enroll_user(user1)
+
+        @shard2.activate do
+          @user2 = user_model
+          @course2 = course_factory(active_all: true)
+          @course2.enroll_user(@user2)
+        end
+
+        UserMerge.from(user1).into(@user2)
+
+        admin = user_model
+        Account.site_admin.account_users.create!(user: admin)
+        user_session(admin)
+
+        get 'roster_user', :course_id => course1.id, :id => @user2.id
+        expect(response).to be_success
+      end
     end
 
-    it "should redirect 'disabled', if disabled by the teacher" do
-      PluginSetting.create!(:name => "tinychat", :settings => {})
-      course_with_student_logged_in(:active_all => true)
-      @course.update_attribute(:tab_configuration, [{'id'=>9,'hidden'=>true}])
-      get 'chat', :course_id => @course.id
-      response.should be_redirect
-      flash[:notice].should match(/That page has been disabled/)
+    describe 'section visibility' do
+      before :once do
+        @other_section = @course.course_sections.create! :name => 'Other Section FRD'
+        @course.enroll_teacher(@teacher, :section => @other_section, :allow_multiple_enrollments => true).accept!
+        @other_student = user_factory
+        @course.enroll_student(@other_student, :section => @other_section, :limit_privileges_to_course_section => true).accept!
+      end
+
+      it 'prevents section-limited users from seeing users in other sections' do
+        user_session(@student)
+        get 'roster_user', :course_id => @course.id, :id => @other_student.id
+        expect(response).to be_success
+
+        user_session(@other_student)
+        get 'roster_user', :course_id => @course.id, :id => @student.id
+        expect(response).to be_redirect
+        expect(flash[:error]).to be_present
+      end
+
+      it 'limits enrollments by visibility' do
+        user_session(@student)
+        get 'roster_user', :course_id => @course.id, :id => @teacher.id
+        expect(response).to be_success
+        expect(assigns[:enrollments].map(&:course_section_id)).to match_array([@course.default_section.id, @other_section.id])
+
+        user_session(@other_student)
+        get 'roster_user', :course_id => @course.id, :id => @teacher.id
+        expect(response).to be_success
+        expect(assigns[:enrollments].map(&:course_section_id)).to match_array([@other_section.id])
+      end
     end
   end
 
@@ -83,33 +202,33 @@ describe ContextController do
 
     it "should require a valid HMAC" do
       post 'object_snippet', :object_data => @data, :s => 'DENIED'
-      response.status.should == '400 Bad Request'
+      assert_status(400)
     end
 
     it "should render given a correct HMAC" do
       post 'object_snippet', :object_data => @data, :s => @hmac
-      response.should be_success
-      response['X-XSS-Protection'].should == '0'
+      expect(response).to be_success
+      expect(response['X-XSS-Protection']).to eq '0'
     end
   end
 
   describe "GET '/media_objects/:id/thumbnail" do
     it "should redirect to kaltura even if the MediaObject does not exist" do
-      Kaltura::ClientV3.stubs(:config).returns({})
-      Kaltura::ClientV3.any_instance.expects(:thumbnail_url).returns("http://example.com/thumbnail_redirect")
+      CanvasKaltura::ClientV3.stubs(:config).returns({})
+      CanvasKaltura::ClientV3.any_instance.expects(:thumbnail_url).returns("http://example.com/thumbnail_redirect")
       get :media_object_thumbnail,
         :id => '0_notexist',
         :width => 100,
         :height => 100
 
-      response.should be_redirect
-      response.location.should == "http://example.com/thumbnail_redirect"
+      expect(response).to be_redirect
+      expect(response.location).to eq "http://example.com/thumbnail_redirect"
     end
   end
 
   describe "POST '/media_objects'" do
     before :each do
-      course_with_student_logged_in(:active_all => true)
+      user_session(@student)
     end
 
     it "should match the create_media_object route" do
@@ -131,10 +250,10 @@ describe ContextController do
         :title => "new title"
 
       @media_object.reload
-      @media_object.title.should == "new title"
+      expect(@media_object.title).to eq "new title"
 
       @user.reload
-      @user.media_objects.count.should == @original_count
+      expect(@user.media_objects.count).to eq @original_count
     end
 
     it "should create the object if it doesn't already exist" do
@@ -147,12 +266,119 @@ describe ContextController do
         :title => "title"
 
       @user.reload
-      @user.media_objects.count.should == @original_count + 1
+      expect(@user.media_objects.count).to eq @original_count + 1
       @media_object = @user.media_objects.last
 
-      @media_object.media_id.should == "new_object"
-      @media_object.media_type.should == "audio"
-      @media_object.title.should == "title"
+      expect(@media_object.media_id).to eq "new_object"
+      expect(@media_object.media_type).to eq "audio"
+      expect(@media_object.title).to eq "title"
+    end
+
+    it "should truncate the title and user_entered_title" do
+      post :create_media_object,
+        :context_code => "user_#{@user.id}",
+        :id => "new_object",
+        :type => "audio",
+        :title => 'x' * 300,
+        :user_entered_title => 'y' * 300
+      @media_object = @user.reload.media_objects.last
+      expect(@media_object.title.size).to be <= 255
+      expect(@media_object.user_entered_title.size).to be <= 255
+    end
+  end
+
+  describe "GET 'prior_users" do
+    before do
+      user_session(@teacher)
+      create_users_in_course(@course, 21)
+      @course.student_enrollments.update_all(workflow_state: "completed")
+    end
+
+    it "should paginate" do
+      get :prior_users, :course_id => @course.id
+      expect(response).to be_success
+      expect(assigns[:prior_users].size).to eql 20
+    end
+  end
+
+  describe "GET 'undelete_index'" do
+    it 'should work' do
+      user_session(@teacher)
+      assignment_model(course: @course)
+      @assignment.destroy
+
+      get :undelete_index, course_id: @course.id
+      expect(response).to be_success
+      expect(assigns[:deleted_items]).to include(@assignment)
+    end
+  end
+
+  describe "POST 'undelete_item'" do
+    it 'does not allow dangerous sends' do
+      user_session(@teacher)
+      @course.any_instantiation.expects(:teacher_names).never
+      post :undelete_item, course_id: @course.id, asset_string: 'teacher_name_1'
+      expect(response.status).to eq 500
+    end
+
+    it 'allows undeleting a "normal" association' do
+      user_session(@teacher)
+      assignment_model(course: @course)
+      @assignment.destroy
+
+      post :undelete_item, course_id: @course.id, asset_string: @assignment.asset_string
+      expect(@assignment.reload).not_to be_deleted
+    end
+
+    it 'allows undeleting wiki pages' do
+      # wiki pages are special because they have to go through context.wiki
+      user_session(@teacher)
+      page = @course.wiki.wiki_pages.create(:title => "some page")
+      page.workflow_state = 'deleted'
+      page.save!
+
+      post :undelete_item, course_id: @course.id, asset_string: page.asset_string
+      expect(page.reload).not_to be_deleted
+    end
+
+    it 'allows undeleting attachments' do
+      # attachments are special because they use file_state
+      user_session(@teacher)
+      attachment_model
+      @attachment.destroy
+
+      post :undelete_item, course_id: @course.id, asset_string: @attachment.asset_string
+      expect(@attachment.reload).not_to be_deleted
+    end
+  end
+
+  describe "GET 'roster_user_usage'" do
+    before(:once) do
+      page = @course.wiki.wiki_pages.create(:title => "some page")
+      AssetUserAccess.create!({
+        user_id: @student,
+        asset_code: page.asset_string,
+        context: @course,
+        category: 'pages'
+      })
+    end
+
+    it "returns accesses" do
+      user_session(@teacher)
+
+      get :roster_user_usage, course_id: @course.id, user_id: @student.id
+
+      expect(response).to be_success
+      expect(assigns[:accesses].length).to eq 1
+    end
+
+    it "returns json" do
+      user_session(@teacher)
+
+      get :roster_user_usage, course_id: @course.id, user_id: @student.id, format: :json
+
+      expect(response).to be_success
+      expect(JSON.parse(response.body.gsub("while(1);", "")).length).to eq 1
     end
   end
 end

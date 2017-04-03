@@ -16,14 +16,14 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 define([
-  'i18n!calendars',
+  'i18nObj',
   'jquery' /* $ */,
   'jquery.instructure_date_and_time' /* datepicker */,
   'jquery.templateData' /* fillTemplateData */,
   'jqueryui/datepicker' /* /\.datepicker/ */
 ], function(I18n, $) {
 
-  var monthNames = I18n.t('#date.month_names');
+  var monthNames = I18n.lookup('date.month_names');
 
   function makeDate(date) {
     return {
@@ -39,7 +39,7 @@ define([
       var data = {};
       var current = null;
       if(typeof(change) == "string") {
-        var current = $.datepicker.parseDate('mm/dd/yy', change);
+        var current = $.datepicker.oldParseDate('mm/dd/yy', change);
         if(current) {
           current.setDate(1);
         }
@@ -118,22 +118,28 @@ define([
         }
         var month_number = month < 9 ? "0" + (month + 1) : (month + 1);
         var day_number = day < 10 ? "0" + day : day;
-        id = "day_" + year + "_" + month_number + "_" + day_number
+        var id = "day_" + year + "_" + month_number + "_" + day_number;
         if($month.hasClass('mini_month')) {
           id = "mini_" + id;
         }
         $day.attr('id', id)
+          .addClass("date_" + month_number + "_" + day_number + "_" + year)
           .find(".day_number").text(day).attr('title', month_number + "/" + day_number + "/" + year)
-          .addClass("date_" + month_number + "_" + day_number + "_" + year);
+          .addClass("date_" + month_number + "_" + day_number + "_" + year); // left here because I don't know what it'll break...
         var $div = $day.children('div');
         if($month.hasClass('mini_month')) {
           $div = $day;
         }
-        $div.removeClass('current_month other_month today');
+        $div.removeClass('current_month other_month next_month previous_month today');
         if(month == firstDayOfMonth.month) {
           $div.addClass('current_month');
         } else {
           $div.addClass('other_month');
+          if(firstDayOfMonth.month == (month + 1) % 12) {
+            $div.addClass('previous_month');
+          } else {
+            $div.addClass('next_month');
+          }
         }
         if(month == today.month && day == today.day && year == today.year) {
           $div.addClass('today');

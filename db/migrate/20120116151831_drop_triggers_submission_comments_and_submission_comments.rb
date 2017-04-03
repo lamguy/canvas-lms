@@ -2,7 +2,9 @@
 # While you can edit this file, any changes you make to the definitions here
 # will be undone by the next auto-generated trigger migration.
 
-class DropTriggersSubmissionCommentsAndSubmissionComments < ActiveRecord::Migration
+class DropTriggersSubmissionCommentsAndSubmissionComments < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     drop_trigger("submission_comments_after_insert_row_tr", "submission_comments", :generated => true)
 

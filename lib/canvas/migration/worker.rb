@@ -16,18 +16,25 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require 'action_controller'
-require 'action_controller/test_process.rb'
+require 'action_controller_test_process'
 
-module Canvas::Migration
-module Worker
-  
-  def self.get_converter(settings)
-    Canvas::Migration::PackageIdentifier.new(settings).get_converter
+module Canvas::Migration::Worker
+
+  class Base < Struct.new(:migration_id)
+    def on_permanent_failure(error)
+      if migration_id
+        cm = ContentMigration.where(id: migration_id).first
+        cm.fail_with_error!(error) if cm
+      end
+    end
   end
-  
+
+  def self.get_converter(settings)
+    Canvas::Migration::Archive.new(settings).get_converter
+  end
+
   def self.upload_overview_file(file, content_migration)
-    uploaded_data = ActionController::TestUploadedFile.new(file.path, Attachment.mimetype(file.path))
+    uploaded_data = Rack::Test::UploadedFile.new(file.path, Attachment.mimetype(file.path))
     
     att = Attachment.new
     att.context = content_migration
@@ -49,7 +56,7 @@ module Worker
     att = nil
     
     begin
-      Zip::ZipFile.open(zip_file, 'w') do |zipfile|
+      Zip::File.open(zip_file, 'w') do |zipfile|
         Dir["#{folder}/**/**"].each do |file|
           next if File.basename(file) == file_name
           file_path = file.sub(folder+'/', '')
@@ -57,7 +64,7 @@ module Worker
         end
       end
 
-      upload_file = ActionController::TestUploadedFile.new(zip_file, "application/zip")
+      upload_file = Rack::Test::UploadedFile.new(zip_file, "application/zip")
       att = Attachment.new
       att.context = content_migration
       att.uploaded_data = upload_file
@@ -66,7 +73,7 @@ module Worker
       content_migration.exported_attachment = att
       content_migration.save
     rescue => e
-      Rails.logger.warn "Error while uploading exported data for content_migration #{content_migration.id} - #{e.to_s}"
+      Rails.logger.warn "Error while uploading exported data for content_migration #{content_migration.id} - #{e}"
       raise e
     end
 
@@ -75,13 +82,30 @@ module Worker
   
   def self.clear_exported_data(folder)
     begin
-      config = Setting.from_config('external_migration')
+      config = ConfigFile.load('external_migration')
       if !config || !config[:keep_after_complete]
-        FileUtils::rm_rf(folder) if File.exists?(folder)
+        FileUtils::rm_rf(folder) if File.exist?(folder)
       end
     rescue
       Rails.logger.warn "Couldn't clear export data for content_migration #{content_migration.id}"
     end
   end
-end
+
+  def self.download_attachment(cm, url)
+    att = Attachment.new
+    att.context = cm
+    att.file_state = 'deleted'
+    att.workflow_state = 'unattached'
+    att.clone_url(url, false, true, :quota_context => cm.context)
+
+    if att.file_state == 'errored'
+      raise Canvas::Migration::Error, att.upload_error_message
+    end
+
+    cm.attachment = att
+    cm.save!
+    att
+  rescue Attachment::OverQuotaError
+    raise Canvas::Migration::Error, $!.message
+  end
 end

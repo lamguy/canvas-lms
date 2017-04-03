@@ -1,4 +1,6 @@
-class CreateDiscussionEntryParticipants < ActiveRecord::Migration
+class CreateDiscussionEntryParticipants < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     create_table "discussion_entry_participants" do |t|
       t.integer "discussion_entry_id", :limit => 8

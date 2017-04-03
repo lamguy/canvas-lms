@@ -1,33 +1,13 @@
 <% if can_do @account, @current_user, :read_roster %>
-  <h2><%= t 'titles.find_user', "Find A User" %></h2>
-  <div class="rs-margin-lr">
-    <% form_for :user, :url => account_users_path(@account), :html => {:id => "new_user", :method => :get} do |f| -%>
-      <fieldset class="textfield-inline-with-button">
-        <input id="user_name" name="user[name]" value="<%= @user_query %>" />
-        <button class='button small-button'><%= t 'buttons.go', "Go" %></button>
-      </fieldset>
+  <% js_bundle :account_search %>
+  <h2 id="user_name_label"><%= t 'titles.find_user', "Find A User" %></h2>
+  <div class="rs-margin-bottom">
+    <%= form_for :user, :url => account_users_path(@account), :html => {:id => "new_user", :class => "ic-Form-control account_search_form", :method => :get} do |f| -%>
+      <div class="ic-Input-group">
+        <input name="focus" type="hidden" value="user_name"/>
+        <input class="ic-Input" type="text" id="user_name" name="user[name]" value="<%= @user_query %>" aria-labelledby="user_name_label" />
+        <button class='Button'><%= t 'buttons.go', "Go" %></button>
+      </div>
     <% end -%>
   </div>
-
-  <% js_block do %>
-    <script type="text/javascript">
-    require([
-      'jquery' /* jQuery, $ */,
-      'jqueryui/autocomplete' /* /\.autocomplete/ */
-    ], function($) {
-
-      // disabling until we can make this fast
-      /*$(function(){
-        $("#new_user").find("#user_name").autocomplete({
-          minLength: 4,
-          delay: 150, //miliseconds
-          source: $("#new_user")[0].action + ".json",
-          select: function(event, ui){
-            window.location = $("#new_user")[0].action + "/" + ui.item.id;
-          }
-        });
-      });*/
-    });
-    </script>
-  <% end %>
 <% end %>

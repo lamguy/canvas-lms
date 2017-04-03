@@ -1,5 +1,5 @@
-require ['compiled/util/processMigrationItemSelections'], (processMigrationItemSelections)->
-  module "processMigrationItemSelections"
+define ['compiled/util/processMigrationItemSelections'], (processMigrationItemSelections)->
+  QUnit.module "processMigrationItemSelections"
   data = {
             "authenticity_token": "QL/bXYKYG65JrbPhnzd5XXwNMmRw2kbsl+j02gY3Quc=",
             "copy[content_migration_id]": "219",
@@ -98,5 +98,5 @@ require ['compiled/util/processMigrationItemSelections'], (processMigrationItemS
                         "copy[day_substitutions][0]" : "1",
                         "copy[day_substitutions][3]" : "4"
     }
-    
-    
+
+

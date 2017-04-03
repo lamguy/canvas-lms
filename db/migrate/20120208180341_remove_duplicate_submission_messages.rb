@@ -1,13 +1,15 @@
-class RemoveDuplicateSubmissionMessages < ActiveRecord::Migration
-  self.transactional = false
+class RemoveDuplicateSubmissionMessages < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
+  disable_ddl_transaction!
 
   def self.up
     # destroy rather than delete so that callbacks happen
-    ConversationMessage.destroy_all(<<-CONDITIONS)
+    ConversationMessage.where(<<-CONDITIONS).destroy_all
       asset_id IS NOT NULL
       AND id NOT IN (
         SELECT MIN(id)
-        FROM conversation_messages
+        FROM #{ConversationMessage.quoted_table_name}
         WHERE asset_id IS NOT NULL
         GROUP BY conversation_id, asset_id
       )

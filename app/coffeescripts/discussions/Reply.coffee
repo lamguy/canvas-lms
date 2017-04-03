@@ -3,27 +3,48 @@ define [
   'underscore'
   'i18n!discussions.reply'
   'jquery'
-  'compiled/discussions/Entry'
+  'compiled/models/Entry'
   'str/htmlEscape'
   'jst/discussions/_reply_attachment'
   'compiled/fn/preventDefault'
-  'tinymce.editor_box'
-], (Backbone, _, I18n, $, Entry, htmlEscape, replyAttachmentTemplate, preventDefault) ->
+  'compiled/views/editor/KeyboardShortcuts'
+  'str/stripTags'
+  'jsx/shared/rce/RichContentEditor'
+  'jquery.instructure_forms'
+], (Backbone, _, I18n, $, Entry, htmlEscape, replyAttachmentTemplate,
+      preventDefault, KeyboardShortcuts, stripTags, RichContentEditor) ->
+
+  RichContentEditor.preloadRemoteModule()
 
   class Reply
 
     ##
     # Creates a new reply to an Entry
     #
-    # @param {Entry} entry
+    # @param {view} an EntryView instance
     constructor: (@view, @options={}) ->
-      @el = @view.$ '.discussion-reply-label:first'
-      @showWhileEditing = @el.next()
-      @textarea = @showWhileEditing.find('.reply-textarea')
-      @form = @el.closest('form').submit preventDefault @submit
+      @el = @view.$ '.discussion-reply-action:first'
+      # works for threaded discussion topic and entries
+      @discussionEntry = @el.closest '.discussion_entry'
+      # required for non-threaded reply area at bottom of an entry block
+      @discussionEntry = @el.closest '.entry' if @discussionEntry.length == 0
+      @form = @discussionEntry.find('form.discussion-reply-form:first').submit preventDefault @submit
+      @textArea = @getEditingElement()
       @form.find('.cancel_button').click @hide
+      @form.on 'click', '.toggle-wrapper a', (e) =>
+        e.preventDefault()
+        RichContentEditor.callOnRCE(@textArea, 'toggle')
+        # hide the clicked link, and show the other toggle link.
+        # todo: replace .andSelf with .addBack when JQuery is upgraded.
+        $(e.currentTarget).siblings('a').andSelf().toggle()
       @form.delegate '.alert .close', 'click', preventDefault @hideNotification
       @editing = false
+
+      _.defer(@attachKeyboardShortcuts)
+
+
+    attachKeyboardShortcuts: =>
+      @view.$('.toggle-wrapper').first().before((new KeyboardShortcuts()).render().$el)
 
     ##
     # Shows or hides the TinyMCE editor for a reply
@@ -41,12 +62,15 @@ define [
     # @api public
     edit: ->
       @form.addClass 'replying'
-      @textarea.editorBox()
-      @el.hide()
-      # sometimes it doesn't focus, not sure why yet, but using a setTimeout
-      # makes it focus every time (chrome/safari anyway...)
-      setTimeout =>
-        @textarea.editorBox 'focus'
+      @discussionEntry.addClass 'replying'
+      RichContentEditor.initSidebar()
+      RichContentEditor.loadNewEditor(@textArea, {
+        focus: true,
+        manageParent: true,
+        tinyOptions: {
+          width: '100%'
+        }
+      })
       @editing = true
       @trigger 'edit', this
 
@@ -55,13 +79,14 @@ define [
     #
     # @api public
     hide: =>
-      @content = @textarea._justGetCode()
-      @textarea._removeEditor()
+      @content = RichContentEditor.callOnRCE(@textArea, 'get_code')
+      RichContentEditor.destroyRCE(@textArea)
       @form.removeClass 'replying'
-      @textarea.val @content
-      @el.show()
+      @discussionEntry.removeClass 'replying'
+      @textArea.val @content
       @editing = false
       @trigger 'hide', this
+      @discussionEntry.find('.discussion-reply-action').focus()
 
     hideNotification: =>
       @view.model.set 'notification', ''
@@ -73,16 +98,22 @@ define [
     # @api private
     submit: =>
       @hide()
-      @textarea._setContentCode ''
-      @view.model.set 'notification', "<div class='alert alert-info'>#{I18n.t 'saving_reply', 'Saving reply...'}</div>"
+      RichContentEditor.callOnRCE(@textArea, 'set_code', '')
+      @view.model.set 'notification', "<div class='alert alert-info'>#{htmlEscape I18n.t 'saving_reply', 'Saving reply...'}</div>"
       entry = new Entry @getModelAttributes()
       entry.save null,
         success: @onPostReplySuccess
         error: @onPostReplyError
         multipart: entry.get('attachment')
-      @hide()
+        proxyAttachment: true
       @removeAttachments()
-      @el.hide()
+
+    ##
+    # Get the jQueryEl element on the discussion entry to edit.
+    #
+    # @api private
+    getEditingElement: ->
+      @view.$('.reply-textarea:first')
 
     ##
     # Computes the model's attributes before saving it to the server
@@ -92,56 +123,58 @@ define [
       now = new Date().getTime()
       # TODO: remove this summary, server should send it in create response and no further
       # work is required
-      summary: $('<div/>').html(@content).text()
+      summary: stripTags(@content)
       message: @content
-      parent_cid: if @options.topLevel then null else @view.model.cid
       parent_id: if @options.topLevel then null else @view.model.get 'id'
       user_id: ENV.current_user_id
       created_at: now
       updated_at: now
-      collapsedView: false
       attachment: @form.find('input[type=file]')[0]
+      new: true
 
     ##
     # Callback when the model is succesfully saved
     #
     # @api private
-    onPostReplySuccess: (entry) =>
-      @view.collection.add entry unless @options.added?()
-      if @view.model.get('allowsSideComments')
-        text = ''
+    onPostReplySuccess: (entry, response) =>
+      if response.errors
+        @hideNotification()
+        @textArea.val entry.get('message')
+        @edit()
+        @form.formErrors(response)
       else
-        text = "<div class='alert alert-success'><a class='close' data-dismiss='alert'>×</a>#{I18n.t 'reply_saved', "Reply saved, *go to your reply*", wrapper: "<a href='##{entry.cid}' data-event='goToReply'>$1</a>"}</div>"
-      @view.model.set 'notification', text
-      @el.show()
+        @view.model.set 'notification', ''
+        @trigger 'save', entry
+        @textArea.val ''
 
     ##
     # Callback when the model fails to save
     #
     # @api private
     onPostReplyError: (entry) =>
-      @view.model.set 'notification', "<div class='alert alert-info'>#{I18n.t 'error_saving_reply', "*An error occured*, please post your reply again later", wrapper: '<strong>$1</strong>'}</div>"
-      @textarea.val entry.get('message')
+      @view.model.set 'notification', "<div class='alert alert-info'>#{I18n.t "*An error occurred*, please post your reply again later", wrapper: '<strong>$1</strong>'}</div>"
+      @textArea.val entry.get('message')
       @edit()
 
     ##
     # Adds an attachment
     addAttachment: ($el) ->
       @form.find('ul.discussion-reply-attachments').append(replyAttachmentTemplate())
+      @form.find('ul.discussion-reply-attachments input').focus()
       @form.find('a.discussion-reply-add-attachment').hide() # TODO: when the data model allows it, tweak this to support multiple in the UI
 
     ##
     # Removes an attachment
     removeAttachment: ($el) ->
       $el.closest('ul.discussion-reply-attachments li').remove()
-      @form.find('a.discussion-reply-add-attachment').show()
+      @form.find('a.discussion-reply-add-attachment').show().focus()
 
     ##
     # Removes all attachments
     removeAttachments: ->
       @form.find('ul.discussion-reply-attachments').empty()
+      @form.find('a.discussion-reply-add-attachment').show().focus()
 
   _.extend Reply.prototype, Backbone.Events
 
   Reply
-

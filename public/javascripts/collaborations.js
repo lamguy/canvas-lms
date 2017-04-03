@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2011 Instructure, Inc.
+ * Copyright (C) 2011-2012 Instructure, Inc.
  *
  * This file is part of Canvas.
  *
@@ -23,150 +23,150 @@ define([
   'jqueryui/dialog',
   'jquery.instructure_misc_plugins' /* .dim, confirmDelete, fragmentChange, showIf */,
   'jquery.templateData' /* getTemplateData */,
-  'vendor/jquery.scrollTo' /* /\.scrollTo/ */
+  'vendor/jquery.scrollTo' /* /\.scrollTo/ */,
+  'compiled/jquery.rails_flash_notifications' /* screen reader notifications*/
 ], function(I18n, $) {
 
-  function removeCollaborationDiv(div) {
-    if($("#collaborations .collaboration:visible").length <= 1) {
-      $("#no_collaborations_message").slideDown();
-      $(".add_collaboration_link").click();
-    }
-    div.slideUp(function() {
-      div.remove();
-    });
-  }
+  var CollaborationsPage = {};
 
-  $(document).ready(function() {
-    $("#add_collaboration_form").submit(function(event) {
-      var data = $(this).getFormData();
-      if(!data['collaboration[title]']) {
-        event.preventDefault();
-        event.stopPropagation();
-        $(this).find("#collaboration_title").errorBox(I18n.t('errors.no_name', "Please enter a name for this document"));
-        $("html,body").scrollTo($(this));
-        return false;
+  CollaborationsPage.Util = {
+    removeCollaboration: function($collaboration) {
+      var visibleCollaborations = $('#collaborations .collaboration:visible')
+
+      if (visibleCollaborations.length <= 1) {
+        $('#no_collaborations_message').slideDown();
+        $('.add_collaboration_link').click();
+        $collaboration.remove();
       }
-      setTimeout(function() {
-        //reload the page but get rid of anything in the hash so that it doesnt automatically
-        //open the Start a New Collaboration section when it reloads
-        window.location = window.location.href.replace(window.location.hash, "");
-      }, 2500);
-    });
-    $(".toggle_collaborators_link").live('click', function() {
-      $(this).parents(".collaboration").find(".collaborators").slideToggle();
-    });
-    $(".add_collaboration_link").click(function(event) {
-      event.preventDefault();
-      if($(this).is(":hidden")) return;
-      $(this).hide();
-      $("#add_collaboration_form").slideToggle(function() {
-        $("html,body").scrollTo($(this));
-        $(this).find(":text:visible:first").focus().select();
-      });
-    });
-    $("#add_collaboration_form .cancel_button").click(function(event) {
-      $(".add_collaboration_link").show();
-      $("#add_collaboration_form").slideToggle();
-    });
-    $("#delete_collaboration_dialog .cancel_button").click(function() {
-      $("#delete_collaboration_dialog").dialog('close');
-    });
-    $("#delete_collaboration_dialog .delete_button").click(function() {
-      var delete_document = $(this).hasClass('delete_document_button'),
-          data = {delete_doc: delete_document},
-          $collaboration = $("#delete_collaboration_dialog").data('collaboration'),
-          url = $collaboration.find(".delete_collaboration_link").attr('href');
+      else{
+        var sortedCollaborations = visibleCollaborations.toArray().sort(function(a, b) {
+          return $(a).data("id") - $(b).data("id");
+        });
+        if (sortedCollaborations.length <= sortedCollaborations.indexOf($collaboration[0])+1)
+        {
+          $(sortedCollaborations[sortedCollaborations.indexOf($collaboration[0])-1]).find(".title").focus()
+        }
+        else
+        {
+          $(sortedCollaborations[sortedCollaborations.indexOf($collaboration[0])+1]).find(".title").focus()
+        }
+        $collaboration.slideUp(function() { $collaboration.remove(); });
+      }
+    },
+
+    collaborationUrl: function(id) {
+      return window.location.toString() + "/" + id;
+    },
+
+    openCollaboration: function (id) {
+      window.open(CollaborationsPage.Util.collaborationUrl(id))
+    }
+
+  };
+
+  CollaborationsPage.Events = {
+    init: function() {
+      $('#delete_collaboration_dialog .cancel_button').on('click', this.onClose);
+      $('#delete_collaboration_dialog .delete_button').on('click', this.onDelete);
+      $(document).fragmentChange(this.onFragmentChange);
+      $('#collaboration_collaboration_type').on('change', this.onTypeChange).change();
+      $(window).on('externalContentReady', this.onExternalContentReady.bind(this));
+    },
+
+    onClose: function(e) {
+      $('#delete_collaboration_dialog').dialog('close');
+    },
+
+    onDelete: function(e) {
+      var deleteDocument = $(this).hasClass('delete_document_button'),
+          data           = { delete_doc: deleteDocument },
+          $collaboration = $('#delete_collaboration_dialog').data('collaboration'),
+          url            = $collaboration.find('.delete_collaboration_link').attr('href');
+
       $collaboration.dim();
-      $("#delete_collaboration_dialog").dialog('close');
+      $('#delete_collaboration_dialog').dialog('close');
+
       $.ajaxJSON(url, 'DELETE', data, function(data) {
-        removeCollaborationDiv($collaboration);
-      }, function(data) {
-      });
-    });
-    $(".delete_collaboration_link").click(function(event) {
-      event.preventDefault();
-      var $collaboration = $(this).parents(".collaboration");
-      if($(this).parents(".collaboration").hasClass('google_docs')) {
-        $("#delete_collaboration_dialog").data('collaboration', $collaboration);
-        $("#delete_collaboration_dialog").dialog({
-          title: "Delete Collaboration?",
-          width: 350
-        });
+        CollaborationsPage.Util.removeCollaboration($collaboration);
+        $.screenReaderFlashMessage(I18n.t('Collaboration was deleted'));
+      }, $.noop);
+    },
+
+    onFragmentChange: function(e, hash) {
+      if (hash !== '#add_collaboration') return;
+
+      if ($('#collaborations .collaboration').length == 0) {
+        $('.add_collaboration_link').click()
+      }
+    },
+
+    onTypeChange: function(e) {
+      var name = $(this).val(),
+          type = name,
+          launch_url = $(this).find('option:selected').data('launch-url'),
+          $description;
+
+      if (launch_url) {
+        $('.collaborate_data, #google_docs_description').hide();
+        $('#collaborate_authorize_google_docs').hide();
+        $('#lti_new_collaboration_iframe').attr('src', launch_url).show();
       } else {
-        $collaboration.confirmDelete({
-          message: "Are you sure you want to delete this collaboration?",
-          url: $(this).attr('href'),
-          success: function(data) {
-            removeCollaborationDiv($(this));
-          }
-        });
-      }
-    });
-    $(".edit_collaboration_link").click(function(event) {
-      event.preventDefault();
-      var $form = $("#edit_collaboration_form").clone(true);
-      $form.attr('action', $(this).attr('href'));
-      var $collaboration = $(this).parents(".collaboration");
-      $form.attr('class', $collaboration.attr('class'));
-      var ids = [];
-      var data = $collaboration.getTemplateData({textValues: ['title', 'description']});
-      $form.fillFormData(data, {object_name: 'collaboration'});
-      var collaborators = $collaboration.find(".collaborators li").each(function() {
-        var id = $(this).getTemplateData({textValues: ['id']}).id;
-        if(id) {
-          ids.push(id);
-        }
-      });
-      $form.find(":checkbox").each(function() {
-        $(this).attr('checked', false);
-      });
-      for(var idx in ids) {
-        var id = ids[idx];
-        $form.find(".collaborator_" + id + " :checkbox").attr('checked', true);
-      }
-      $collaboration.hide().after($form.show());
-    });
-    $("#edit_collaboration_form .cancel_button").click(function() {
-      var $form = $(this).parents("form");
-      $form.hide().prev(".collaboration").show();
-      $form.remove();
-    });
-    $(document).fragmentChange(function(event, hash) {
-      if(hash == "#add_collaboration") {
-        $(".add_collaboration_link").click();
-      }
-    });
-    $(".collaboration .show_participants_link.verbose_footer_link").click(function(event) {
-      event.preventDefault();
-      $(this).parents(".collaboration").find(".collaborators").slideToggle();
-    });
-    $("#collaboration_collaboration_type").change(function(event) {
-      var name = $(this).val();
-      var type = name;
-      if(INST.collaboration_types) {
-        for(var idx in INST.collaboration_types) {
-          var collab = INST.collaboration_types[idx];
-          if(collab.name == name) {
-            type = collab.type;
+        $('#lti_new_collaboration_iframe').hide();
+        $('.collaborate_data, #google_docs_description').show();
+        if (INST.collaboration_types) {
+          for (var i in INST.collaboration_types) {
+            var collaboration = INST.collaboration_types[i];
+
+            if (collaboration.name === name) {
+              type = collaboration.type;
+            }
           }
         }
+
+        $('.collaboration_type').hide()
+
+        $description = $('#new_collaboration #' + type + '_description');
+        $description.show()
+
+        $(".collaborate_data").showIf(!$description.hasClass('unauthorized'));
+        $(".collaboration_authorization").hide();
+        $("#collaborate_authorize_" + type).showIf($description.hasClass('unauthorized'));
       }
-      $("#add_collaboration_form .collaboration_type").hide();
-      var $description = $("#add_collaboration_form #" + type + "_description");
-      $description.show();
-      $(".collaborate_data").showIf(!$description.hasClass('unauthorized'));
-      $(".collaboration_authorization").hide();
-      $("#collaborate_authorize_" + type).showIf($description.hasClass('unauthorized'));
-    }).change();
-    $(".select_all_link,.deselect_all_link").click(function(event) {
-      event.preventDefault();
-      var checked = $(this).hasClass('select_all_link');
-      $(this).parents("form").find(":checkbox").each(function() {
-        $(this).attr('checked', checked);
+    },
+
+    onExternalContentReady: function(e, data) {
+      var contentItem = {contentItems: JSON.stringify(data.contentItems)};
+      if (data.service_id) {
+        this.updateCollaboration(contentItem, data.service_id);
+      }
+      else {
+        this.createCollaboration(contentItem);
+      }
+    },
+
+    updateCollaboration: function(contentItem, collab_id) {
+      var url = $('.collaboration_'+ collab_id + ' a.title')[0].href;
+      $.ajaxJSON( url, 'PUT', contentItem, this.collaborationSuccess, function( msg ) {
+        $.screenReaderFlashMessage(I18n.t('Collaboration update failed'));
       });
-    });
-    if($("#collaborations .collaboration:visible").length < 1)
-      $(".add_collaboration_link").click();
-  });
+    },
+
+    createCollaboration: function(contentItem){
+      var url = $("#new_collaboration").attr('action')
+      $.ajaxJSON( url, 'POST', contentItem, this.collaborationSuccess, function( msg ) {
+        $.screenReaderFlashMessage(I18n.t('Collaboration creation failed'));
+      });
+    },
+
+    collaborationSuccess: function(msg) {
+      CollaborationsPage.Util.openCollaboration(msg.collaboration.id);
+      window.location.reload();
+    }
+
+  };
+
+  $(document).ready(CollaborationsPage.Events.init.bind(CollaborationsPage.Events));
+
+  return CollaborationsPage;
 });
 

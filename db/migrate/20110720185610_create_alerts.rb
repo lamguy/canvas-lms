@@ -1,4 +1,6 @@
-class CreateAlerts < ActiveRecord::Migration
+class CreateAlerts < ActiveRecord::Migration[4.2]
+  tag :predeploy
+
   def self.up
     create_table :alerts do |t|
       t.integer :context_id, :limit => 8
@@ -6,7 +8,7 @@ class CreateAlerts < ActiveRecord::Migration
       t.text :recipients
       t.integer :repetition
 
-      t.timestamps
+      t.timestamps null: true
     end
 
     create_table :alert_criteria do |t|

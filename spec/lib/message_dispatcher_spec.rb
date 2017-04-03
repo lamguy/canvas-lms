@@ -22,56 +22,58 @@ describe 'MessageDispatcher' do
 
   describe ".dispatch" do
     before do
-      message_model(:dispatch_at => Time.now, :workflow_state => 'staged', :to => 'somebody', :updated_at => Time.now.utc - 11.minutes, :user => user, :path_type => 'email')
+      message_model(:dispatch_at => Time.now, :workflow_state => 'staged', :to => 'somebody', :updated_at => Time.now.utc - 11.minutes, :user => user_factory, :path_type => 'email')
     end
 
     it "should reschedule on Mailer delivery error" do
       track_jobs { MessageDispatcher.dispatch(@message) }
-      created_jobs.size.should == 1
+      expect(created_jobs.size).to eq 1
       job = created_jobs.first
-      Mailer.expects(:deliver_message).raises(Timeout::Error)
+      Mailer.expects(:create_message).raises(Timeout::Error)
       run_jobs
-      @message.reload.dispatch_at.should > Time.now.utc + 4.minutes
-      job.reload.attempts.should == 1
-      job.run_at.should == @message.dispatch_at
+      expect(@message.reload.dispatch_at).to be > Time.now.utc + 4.minutes
+      expect(job.reload.attempts).to eq 1
+      expect(job.run_at).to eq @message.dispatch_at
     end
 
     it "should not reschedule on canceled Message" do
       track_jobs { MessageDispatcher.dispatch(@message) }
-      created_jobs.size.should == 1
+      expect(created_jobs.size).to eq 1
       job = created_jobs.first
       @message.cancel
       run_jobs
-      @message.reload.state.should == :cancelled
+      expect(@message.reload.state).to eq :cancelled
       expect { job.reload }.to raise_error(ActiveRecord::RecordNotFound)
     end
   end
 
   describe ".batch_dispatch" do
     before do
-      @messages = (0...3).map { message_model(:dispatch_at => Time.now, :workflow_state => 'staged', :to => 'somebody', :updated_at => Time.now.utc - 11.minutes, :user => user, :path_type => 'email') }
+      @messages = (0...3).map { message_model(:dispatch_at => Time.now, :workflow_state => 'staged', :to => 'somebody', :updated_at => Time.now.utc - 11.minutes, :user => user_factory, :path_type => 'email') }
     end
 
     it "should reschedule on Mailer delivery error, but not on canceled Message" do
       track_jobs { MessageDispatcher.batch_dispatch(@messages) }
-      created_jobs.size.should == 1
+      expect(created_jobs.size).to eq 1
       job = created_jobs.first
       @messages[0].cancel
 
-      Mailer.expects(:deliver_message).twice.raises(Timeout::Error).then.returns(true)
+      am_message = mock()
+      am_message.expects(:deliver_now).returns(true)
+      Mailer.expects(:create_message).twice.raises(Timeout::Error).then.returns(am_message)
 
       track_jobs { Delayed::Worker.new.perform(job) }
-      created_jobs.size.should == 1
+      expect(created_jobs.size).to eq 1
       job2 = created_jobs.first
       @messages.each(&:reload)
-      @messages.map(&:state).should == [:cancelled, :staged, :sent]
-      @messages[1].dispatch_at.should > Time.now.utc + 4.minutes
+      expect(@messages.map(&:state)).to eq [:cancelled, :staged, :sent]
+      expect(@messages[1].dispatch_at).to be > Time.now.utc + 4.minutes
       # the original job is complete, but the individual message gets re-scheduled in its own job
       expect { job.reload }.to raise_error(ActiveRecord::RecordNotFound)
 
-      job2.tag.should == 'Message#deliver'
-      job2.payload_object.object.should == @messages[1]
-      job2.run_at.should == @messages[1].dispatch_at
+      expect(job2.tag).to eq 'Message#deliver'
+      expect(job2.payload_object.object).to eq @messages[1]
+      expect(job2.run_at.to_i).to eq @messages[1].dispatch_at.to_i
     end
   end
 end

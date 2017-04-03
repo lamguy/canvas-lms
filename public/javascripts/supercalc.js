@@ -53,22 +53,26 @@ define([
       options = options || {};
       options.c1 = true;
       var $entryBox = $(this);
-      var $table = $("<table class='formulas'>" +
-                        "<thead><tr><th>" + htmlEscape(I18n.t('headings.formula', "Formula")) + "</th><th>" + htmlEscape(I18n.t('headings.result', "Result")) + "</th><th>&nbsp;</th></tr></thead>" +
+      var $table = $("<table class='formulas' aria-live='polite'>" +
+                        "<thead><tr><td id='headings.formula'>" + htmlEscape(I18n.t('headings.formula', "Formula")) + "</td><td id='headings.result'>" + htmlEscape(I18n.t('headings.result', "Result")) + "</td><td aria-hidden='true'>&nbsp;</td></tr></thead>" +
                         "<tfoot>" +
                           "<tr><td colspan='3' class='last_row_details' style='display: none;'>" + htmlEscape(I18n.t('last_formula_row', "the last formula row will be used to compute the final answer")) + "</td></tr>" +
                           "<tr><td></td><td class='decimal_places'>" +
-                            I18n.t('how_many_decimal_places', '%{number_selector} Decimal Places', {number_selector: $.raw("<select class='round'><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option></select>")}) +
+                            "<select aria-labelledby='decimal_places_label' class='round'><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option></select> " +
+                            "<label id='decimal_places_label'>" + htmlEscape(I18n.t('decimal_places', 'Decimal Places')) + "</label>" +
                           "</td></tr>" +
                         "</tfoot>" +
                         "<tbody></tbody>"+
                       "</table>");
+
+      $entryBox.attr('aria-labelledby', 'headings.formula');
+      $entryBox.css('width', '220px');
       $(this).data('table', $table);
       $entryBox.before($table);
       $table.find("tfoot tr:last td:first").append($entryBox);
       var $displayBox = $entryBox.clone(true).removeAttr('id');
       $table.find("tfoot tr:last td:first").append($displayBox);
-      var $enter = $("<button type='button' class='save_formula_button'>" + htmlEscape(I18n.t('buttons.save', "Save")) + "</button>");
+      var $enter = $("<button type='button' class='btn save_formula_button'>" + htmlEscape(I18n.t('buttons.save', "Save")) + "</button>");
       $table.find("tfoot tr:last td:first").append($enter);
       $entryBox.hide();
       var $input = $("<input type='text' readonly='true'/>");
@@ -112,18 +116,20 @@ define([
           $entryBox.val(formula_text);
           var res = null;
           try {
-            res = "= " + calcCmd.computeValue(formula_text);
+            // precision 15 to strip floating point error
+            var precision = 15;
+            // regex strips extra 0s from toPrecision output
+            var stripZeros = function(str){return str.replace(/(?:(\.[0-9]*[^0e])|\.)0*(e.*)?$/,"$1$2")};
+
+            var val = +calcCmd.computeValue(formula_text).toPrecision(precision);
+            var rounder = Math.pow(10, parseInt(finds.round.val(), 10) || 0) || 1;
+            res = "= " + stripZeros((Math.round(val * rounder) / rounder).toPrecision(precision));
           } catch(e) {
             res = e.toString();
           }
-          if(res && res.match(/=/)) {
-            var val = parseFloat(res.substring(res.indexOf("=") + 1), 10);
-            var rounder = Math.pow(10, parseInt(finds.round.val(), 10) || 0) || 1;
-            var res = "= " + (Math.round(val * rounder) / rounder);
-          }
           this.status.attr('data-res', res);
           if(!no_dom) {
-            this.status.html(res);
+            this.status.text(res);
           }
         });
         if(!no_dom) {
@@ -140,7 +146,7 @@ define([
         if(event.keyCode == 13 || enter && $displayBox.val()) {
           event.preventDefault();
           event.stopPropagation();
-          var $tr = $("<tr class='formula_row'><td class='formula' title='" + htmlEscape(I18n.t('drag_to_reorder', 'Drag to reorder')) + "'></td><td class='status'></td><td><a href='#' class='delete_formula_row_link no-hover'><img src='/images/delete_circle.png'/></a></td></tr>");
+          var $tr = $("<tr class='formula_row'><td class='formula' aria-labelledby='headings.formula' title='" + htmlEscape(I18n.t('drag_to_reorder', 'Drag to reorder')) + "'></td><td class='status' aria-labelledby='headings.result'></td><td><a href='#' class='delete_formula_row_link no-hover'><img src='/images/delete_circle.png' alt='" + htmlEscape(I18n.t('delete_formula', 'Delete Formula')) + "'/></a></td></tr>");
           $tr.find("td:first").text($entryBox.val());
           $entryBox.val("");
           $displayBox.val("");

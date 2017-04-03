@@ -5,10 +5,10 @@
     position: relative;
     padding: 10px;
   }
-  span.has-failed-attempts, span.on-hold {
+  span.has-failed-attempts, span.on-hold, span.slow {
     color: orange;
   }
-  span.has-failed-max-attempts {
+  span.has-failed-max-attempts, span.super-slow {
     color: red;
   }
   dl#job-attributes dt {
@@ -53,7 +53,7 @@
   .unloaded-id { color: #aaa; }
 </style>
 <% end %>
-<% jammit_css :slickgrid %>
+<% css_bundle :slickgrid %>
 <% js_bundle :jobs %>
 
 <div id="running-wrapper" style="float:left">
@@ -85,11 +85,13 @@
     <input type='search' results='15' placeholder='<%= t :search_jobs, "Search Jobs" %>' autosave='canvas-jobs-search' id='jobs-search' name='q' value="<%= params[:q].presence %>" />
     <button id='jobs-refresh'><%= t '#buttons.refresh', "refresh" %></button>
     <%= before_label :total_jobs, "Total" %> <span id='jobs-total'><%= @jobs_count %></span>
-    <button id='select-all-jobs'><%= t 'buttons.select_all', 'select all' %></button>
-    <%= before_label :with_selection, "With Selection" %>
-    <button id='hold-jobs'><%= t 'buttons.hold', 'hold' %></button>
-    <button id='un-hold-jobs'><%= t 'buttons.un_hold', 'un-hold' %></button>
-    <button id='delete-jobs'><%= t 'buttons.delete', 'delete' %></button>
+    <% if Account.site_admin.grants_right?(@current_user, :manage_jobs) %>
+      <button id='select-all-jobs'><%= t 'buttons.select_all', 'select all' %></button>
+      <%= before_label :with_selection, "With Selection" %>
+      <button id='hold-jobs'><%= t 'buttons.hold', 'hold' %></button>
+      <button id='un-hold-jobs'><%= t 'buttons.un_hold', 'un-hold' %></button>
+      <button id='delete-jobs'><%= t 'buttons.delete', 'delete' %></button>
+    <% end %>
   </div>
   <div id="jobs-grid" style="width:700px; height:300px;" class='grid'>
   </div>
@@ -128,6 +130,10 @@
       <td id="job-failed_at" class="show-field">&nbsp;</td>
     </tr>
     <tr>
+      <td><%= before_label :original_job_id, "Original Job ID" %></td>
+      <td id="job-original_job_id" class="show-field">&nbsp;</td>
+    </tr>
+    <tr>
       <td><%= before_label :handler, "Handler" %></td>
       <td><a href='#' id='job-handler-show'>(<%= t 'actions.show', "show" %>)</a>
         <div id='job-handler-wrapper' class='show-field-wrapper'><textarea id='job-handler' class='show-field'></textarea></div>
@@ -145,13 +151,16 @@
 
 <%
 jobs_opts = {
-  :max_attempts => Delayed::Worker.max_attempts,
+  :max_attempts => Delayed::Settings.max_attempts,
   :flavor => @flavor,
   :url => jobs_url(:only => :jobs),
   :batch_update_url => batch_update_jobs_url,
+  :job_url => jobs_url,
   :on_hold_attempt_count => Delayed::Job::ON_HOLD_COUNT,
   :limit => JobsController::LIMIT,
   :starting_query => params[:q],
+  :slow_threshold => Setting.get('jobs.slow_threshold', 600).to_f,
+  :super_slow_threshold => Setting.get('jobs.super_slow_threshold', 3600).to_f
 }
 running_opts = jobs_opts.merge({
   :url => jobs_url(:only => :running),

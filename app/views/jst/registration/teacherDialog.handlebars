@@ -12,18 +12,20 @@
         <input type="text" id="teacher_email" name="pseudonym[unique_id]">
       </div>
     </div>
+    {{#if terms_required}}
     <div class="control-group">
       <div class="controls">
         <label class="checkbox">
           <input type="checkbox" name="user[terms_of_use]" value="1">
-          {{#t "agree_to_terms"}}You agree to the <a href="{{terms_url}}" target="_new">terms of use</a>.{{/t}}
+          {{{terms_html}}}
         </label>
       </div>
     </div>
+    {{/if}}
     <div class="control-group">
       <div class="controls">
         <input type="hidden" name="user[initial_enrollment_type]" value="teacher">
-        <button class="button btn-primary" type="submit">{{#t "buttons.start_teaching"}}Start Teaching{{/t}}</button>
+        <button class="btn btn-primary" type="submit">{{#t "buttons.start_teaching"}}Start Teaching{{/t}}</button>
       </div>
     </div>
   </form>

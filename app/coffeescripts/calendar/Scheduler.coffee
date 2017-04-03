@@ -2,17 +2,20 @@ define [
   'jquery',
   'underscore'
   'i18n!calendar'
+  'compiled/util/fcUtil'
   'jst/calendar/appointmentGroupList'
   'jst/calendar/schedulerRightSideAdminSection'
   'compiled/calendar/EditAppointmentGroupDialog'
   'compiled/calendar/MessageParticipantsDialog'
   'jst/calendar/deleteItem'
+  'compiled/util/semanticDateRange'
   'jquery.instructure_date_and_time'
   'jqueryui/dialog'
   'jquery.instructure_misc_plugins'
   'vendor/jquery.ba-tinypubsub'
-  'vendor/jquery.spin'
-], ($, _, I18n, appointmentGroupListTemplate, schedulerRightSideAdminSectionTemplate, EditAppointmentGroupDialog, MessageParticipantsDialog, deleteItemTemplate) ->
+  'spin.js/jquery.spin'
+  'compiled/behaviors/activate'
+], ($, _, I18n, fcUtil, appointmentGroupListTemplate, schedulerRightSideAdminSectionTemplate, EditAppointmentGroupDialog, MessageParticipantsDialog, deleteItemTemplate, semanticDateRange) ->
 
   class Scheduler
     constructor: (selector, @calendar) ->
@@ -21,13 +24,13 @@ define [
 
       @listDiv = @div.find(".appointment-list")
 
-      @div.delegate('.single_item_done_button', 'click', @doneClick)
-
-      @div.delegate('.view_calendar_link', 'click', @viewCalendarLinkClick)
+      @div.delegate('.view_calendar_link', 'click keyclick', @viewCalendarLinkClick)
+      @div.activate_keyclick('.view_calendar_link')
       @listDiv.delegate('.edit_link', 'click', @editLinkClick)
       @listDiv.delegate('.message_link', 'click', @messageLinkClick)
       @listDiv.delegate('.delete_link', 'click', @deleteLinkClick)
-      @listDiv.delegate('.show_event_link', 'click', @showEventLinkClick)
+      @listDiv.delegate('.show_event_link', 'click keyclick', @showEventLinkClick)
+      @listDiv.activate_keyclick('.show_event_link')
 
       if @canManageAGroup()
         @div.addClass('can-manage')
@@ -79,22 +82,21 @@ define [
           $('#right-side-wrapper').hide()
       else
         $('#right-side-wrapper').show()
-        $('#right-side .rs-section').not("#undated-events, #calendar-feed").show()
+        $('#right-side .rs-section').not("#undated-events-section, #calendar-feed").show()
         # we have to .detach() because of the css that puts lines under each .rs-section except the last,
         # if we just .hide() it would still be there so the :last-child selector would apply to it,
         # not the last _visible_ element
         @rightSideAdminSection?.detach()
 
     show: =>
-      $("#undated-events, #calendar-feed").hide()
+      $("#undated-events-section, #calendar-feed").hide()
       @active = true
       @div.show()
       @loadData()
       @toggleListMode(true)
-      $.publish "Calendar/saveVisibleContextListAndClear"
 
     hide: =>
-      $("#undated-events, #calendar-feed").show()
+      $("#undated-events-section, #calendar-feed").show()
       @active = false
       @div.hide()
       @toggleListMode(false)
@@ -108,7 +110,7 @@ define [
       false
 
     loadData: =>
-      if not @loadingDeferred || (@loadingDeferred && not @loadingDeferred.isResolved())
+      if not @loadingDeferred || (@loadingDeferred && @loadingDeferred.isResolved())
         @loadingDeferred = new $.Deferred()
 
       @groups = {}
@@ -126,21 +128,8 @@ define [
       if @groups
         groups = []
         for id, group of @groups
-          # set an array of times that the student is signed up for
-          group.signed_up_times = null
-          if group.appointmentEvents
-            for appointmentEvent in group.appointmentEvents when appointmentEvent.object.reserved
-              for childEvent in appointmentEvent.childEvents when childEvent.object.own_reservation
-                group.signed_up_times ?= []
-                group.signed_up_times.push
-                  id: childEvent.id
-                  formatted_time: childEvent.displayTimeString()
-
-          # count how many people have signed up
-          group.signed_up = 0
-          if group.appointmentEvents
-            for appointmentEvent in group.appointmentEvents
-              group.signed_up += appointmentEvent.childEvents.length if appointmentEvent.childEvents
+          for timeId, time of group.reserved_times
+            time.formatted_time = semanticDateRange(time.start_at, time.end_at)
 
           # look up the context names for the group
           group.contexts = _.filter(@contexts, (c) -> c.asset_string in group.context_codes)
@@ -157,18 +146,26 @@ define [
         if @viewingGroup
           @viewingGroup = @groups[@viewingGroup.id]
           if @viewingGroup
-            @listDiv.find(".appointment-group-item[data-appointment-group-id='#{@viewingGroup.id}']").addClass('active')
+            appointmentGroup = @listDiv.find(".appointment-group-item[data-appointment-group-id='#{@viewingGroup.id}']")
+            appointmentGroup.addClass('active')
+            appointmentGroup.find('h3 .view_calendar_link').focus()
             @calendar.displayAppointmentEvents = @viewingGroup
           else
             @toggleListMode(true)
 
       $.publish "Calendar/refetchEvents"
+      if (@viewingGroup)
+        @calendar.showSchedulerSingle(@viewingGroup)
 
     viewCalendarLinkClick: (jsEvent) =>
       jsEvent.preventDefault()
+      if not @viewingGroup
+        $.screenReaderFlashMessageExclusive(I18n.t('Scheduler shown'))
       @viewCalendarForElement $(jsEvent.target)
 
     showEventLinkClick: (jsEvent) =>
+      if not @viewingGroup
+        $.screenReaderFlashMessageExclusive(I18n.t('Scheduler shown'))
       jsEvent.preventDefault()
       group = @viewCalendarForElement $(jsEvent.target)
 
@@ -184,7 +181,7 @@ define [
       groupId = thisItem.data('appointment-group-id')
       thisItem.addClass('active')
       group = @groups?[groupId]
-      @viewCalendarForGroup(@groups?[groupId])
+      @viewCalendarForGroup(group)
       group
 
     viewCalendarForGroupId: (id) =>
@@ -200,36 +197,39 @@ define [
       @loadingDeferred.done =>
         @div.addClass('showing-single')
 
-        @calendar.calendar.show()
-        @calendar.calendar.fullCalendar('changeView', 'agendaWeek')
-
         if @viewingGroup.start_at
-          @calendar.gotoDate($.parseFromISO(@viewingGroup.start_at).time)
+          @calendar.gotoDate(fcUtil.wrap(@viewingGroup.start_at))
         else
-          @calendar.gotoDate(new Date())
+          @calendar.gotoDate(fcUtil.now())
 
         @calendar.displayAppointmentEvents = @viewingGroup
         $.publish "Calendar/refetchEvents"
         @redraw()
 
     doneClick: (jsEvent) =>
-      jsEvent.preventDefault()
+      jsEvent?.preventDefault()
       @toggleListMode(true)
 
     showList: =>
       @div.removeClass('showing-single')
+      target = @listDiv.find('.appointment-group-item.active h3 .view_calendar_link')
       @listDiv.find('.appointment-group-item').removeClass('active')
 
-      @calendar.calendar.hide()
+      @calendar.hideAgendaView()
       @calendar.displayAppointmentEvents = null
+      target.focus()
 
     editLinkClick: (jsEvent) =>
       jsEvent.preventDefault()
       group = @groups?[$(jsEvent.target).closest(".appointment-group-item").data('appointment-group-id')]
       return unless group
 
-      @createDialog = new EditAppointmentGroupDialog(group, @appointmentGroupContexts, @dialogCloseCB)
-      @createDialog.show()
+      @calendar.dataSource.getEventsForAppointmentGroup group, (events) =>
+        @loadData()
+        @loadingDeferred.done =>
+          group = @groups[group.id]
+          @createDialog = new EditAppointmentGroupDialog(group, @appointmentGroupContexts, @dialogCloseCB)
+          @createDialog.show()
 
     deleteLinkClick: (jsEvent) =>
       jsEvent.preventDefault()

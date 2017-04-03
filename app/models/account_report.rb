@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2011 - 2012 Instructure, Inc.
+# Copyright (C) 2011 - 2014 Instructure, Inc.
 #
 # This file is part of Canvas.
 #
@@ -18,10 +18,12 @@
 
 class AccountReport < ActiveRecord::Base
   include Workflow
-  attr_accessible :user, :account, :report_type, :parameters
+
   belongs_to :account
   belongs_to :user
   belongs_to :attachment
+
+  validates_presence_of :account_id, :user_id, :workflow_state
 
   serialize :parameters
 
@@ -33,19 +35,15 @@ class AccountReport < ActiveRecord::Base
     state :deleted
   end
 
-  named_scope :last_complete_of_type, lambda{|type|
-    { :conditions => [ "report_type = ? AND workflow_state = 'complete'", type],
-      :order => "updated_at DESC",
-      :limit => 1
-    }
-  }
+  scope :complete, -> { where(progress: 100) }
+  scope :most_recent, -> { order(updated_at: :desc).limit(1) }
+  scope :active, -> { where.not(workflow_state: 'deleted') }
 
-  named_scope :last_of_type, lambda{|type|
-    { :conditions => [ "report_type = ?", type ],
-      :order => "updated_at DESC",
-      :limit => 1
-    }
-  }
+  alias_method :destroy_permanently!, :destroy
+  def destroy
+    self.workflow_state = 'deleted'
+    save!
+  end
 
   def context
     self.account
@@ -61,9 +59,9 @@ class AccountReport < ActiveRecord::Base
 
   def run_report(type=nil)
     self.report_type ||= type
-    if AccountReport.available_reports(self.account)[self.report_type]
+    if AccountReport.available_reports[self.report_type]
       begin
-        Canvas::AccountReports.generate_report(self)
+        AccountReports.generate_report(self)
       rescue
         self.workflow_state = :error
         self.save
@@ -73,11 +71,15 @@ class AccountReport < ActiveRecord::Base
       self.save
     end
   end
-  handle_asynchronously :run_report
+  handle_asynchronously :run_report, :priority => Delayed::LOW_PRIORITY, :max_attempts => 1
 
-  def self.available_reports(account)
+  def has_parameter?(key)
+    self.parameters.is_a?(Hash) && self.parameters[key].presence
+  end
+
+  def self.available_reports
     # check if there is a reports plugin for this account
-    Canvas::AccountReports.for_account(account.root_account.id)
+    AccountReports.available_reports
   end
 
 end

@@ -132,6 +132,7 @@ $.widget("ui.dialog", {
 			uiDialogTitlebarClose = $( "<a href='#'></a>" )
 				.addClass( "ui-dialog-titlebar-close  ui-corner-all" )
 				.attr( "role", "button" )
+				.attr( "tabindex", 0)
 				.click(function( event ) {
 					event.preventDefault();
 					that.close( event );
@@ -147,6 +148,7 @@ $.widget("ui.dialog", {
 				.uniqueId()
 				.addClass( "ui-dialog-title" )
 				.html( title )
+				.attr("role", "heading")
 				.prependTo( uiDialogTitlebar ),
 
 			uiDialogButtonPane = ( this.uiDialogButtonPane = $( "<div>" ) )
@@ -156,10 +158,9 @@ $.widget("ui.dialog", {
 				.addClass( "ui-dialog-buttonset" )
 				.appendTo( uiDialogButtonPane );
 
-		uiDialog.attr({
-			role: "dialog",
-			"aria-labelledby": uiDialogTitle.attr( "id" )
-		});
+		if (uiDialogContent.attr("id") === undefined) {
+			uiDialogContent.uniqueId();
+		}
 
 		uiDialogTitlebar.find( "*" ).add( uiDialogTitlebar ).disableSelection();
 		this._hoverable( uiDialogTitlebarClose );
@@ -229,6 +230,7 @@ $.widget("ui.dialog", {
 		}
 
 		this._isOpen = false;
+		this.uiDialog.attr('aria-hidden', true);
 
 		if ( this.overlay ) {
 			this.overlay.destroy();
@@ -258,6 +260,11 @@ $.widget("ui.dialog", {
 				}
 			});
 			$.ui.dialog.maxZ = maxZ;
+
+			// INSTRUCTURE
+			if ( this.oldFocus && $(this.oldFocus).is( ':visible' ) ) {
+				this.oldFocus.focus();
+			}
 		}
 
 		return this;
@@ -319,22 +326,40 @@ $.widget("ui.dialog", {
 
 		// prevent tabbing out of modal dialogs
 		if ( options.modal ) {
+			// INSTRUCTURE
+			// Ensure that an element is focused after opening and closing.
+			this.oldFocus = document.activeElement;
+			$( ":tabbable:first", this.uiDialog ).focus();
+
 			this._on( uiDialog, { keydown: function( event ) {
 				if ( event.keyCode !== $.ui.keyCode.TAB ) {
 					return;
 				}
 
-				var tabbables = $( ":tabbable", this ),
-					first = tabbables.filter( ":first" ),
-					last  = tabbables.filter( ":last" );
+				// INSTRUCTURE
+				// Constrain tabbing to within the modal.
+				// Safari was shift-tabbing from a control in the
+				// middle of the new conversations compose dialog
+				// to a background control, killing focus
+				var tabbables = $( ":tabbable", this.uiDialog );
+				var index = $.inArray( event.target, tabbables );
+				if ( index == -1 ) {return;}
+				var targetIndex = index + (event.shiftKey ? -1 : 1);
+				targetIndex = (targetIndex + tabbables.length) % tabbables.length;
+				var target = tabbables.eq(targetIndex)
+				target.focus();
 
-				if ( event.target === last[0] && !event.shiftKey ) {
-					first.focus( 1 );
-					return false;
-				} else if ( event.target === first[0] && event.shiftKey ) {
-					last.focus( 1 );
-					return false;
-				}
+				// when switching to a target for which the browser would select the
+				// full contents on default tab behavior, we still want to do the same.
+				var fullSelectTypes = [
+				  'input[type="text"]', 'input[type="password"]', 'input[type="number"]',
+				  'input[type="datetime"]', 'input[type="email"]',
+				  'input[type="search"]', 'input[type="tel"]', 'input[type="url"]'
+				];
+				if (target.is(fullSelectTypes.join(',')))
+				  target[0].select();
+
+				return false;
 			}});
 		}
 
@@ -347,7 +372,16 @@ $.widget("ui.dialog", {
 				hasFocus = uiDialog;
 			}
 		}
-		hasFocus.eq( 0 ).focus();
+
+		this.uiDialog.attr('aria-hidden', false);
+		if ($.browser && $.browser.safari) {
+      var titleClose = this.uiDialog.find('.ui-dialog-titlebar-close');
+      if (titleClose.length) {
+        titleClose.focus();
+      } else {
+        hasFocus.eq( 0 ).focus();
+      }
+		}
 
 		this._isOpen = true;
 		this._trigger( "open" );
@@ -714,7 +748,11 @@ $.extend( $.ui.dialog.overlay, {
 					$( document ).bind( $.ui.dialog.overlay.events, function( event ) {
 						// stop events if the z-index of the target is < the z-index of the overlay
 						// we cannot return true when we don't want to cancel the event (#3523)
-						if ( $( event.target ).zIndex() < $.ui.dialog.overlay.maxZ ) {
+						//
+						// INSTRUCTURE - make sure that the element isn't in the dialog
+						// before stopping all events
+						if ( $( event.target ).zIndex() < $.ui.dialog.overlay.maxZ &&
+								!(dialog.element.has(event.target).length ) ) {
 							return false;
 						}
 					});
